@@ -92,12 +92,6 @@ def can_edit_file(file_owner):
 def show_login_form():
     st.title("🔐 Login to Problem File Tracker")
     
-    # Development reset option (remove in production)
-    if st.button("🔄 Reset Session (Dev Only)", help="Click to clear session and test login"):
-        for key in list(st.session_state.keys()):
-            del st.session_state[key]
-        st.rerun()
-    
     with st.form("login_form"):
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
