@@ -1,0 +1,56 @@
+{
+  "problem_files": {
+    "8493d0d6-39b2-4da4-a4b3-025a58c66bed": {
+      "problem_name": "Chetti",
+      "owner": "Admin",
+      "project_start_date": "2025-07-29 00:00:00",
+      "display_week": 1,
+      "tasks": {},
+      "created_date": "2025-07-29 11:01:05.474295",
+      "last_modified": "2025-07-29 11:01:05.474297"
+    },
+    "7ac356a8-7d7a-41b3-bb89-329bd5e2008a": {
+      "problem_name": "Haven",
+      "owner": "Andrew",
+      "project_start_date": "2025-07-29 00:00:00",
+      "display_week": 1,
+      "tasks": {},
+      "created_date": "2025-07-29 11:01:31.361884",
+      "last_modified": "2025-07-29 11:08:47.948881"
+    },
+    "b9e296c4-02bd-4a35-b79e-ad10b30c295c": {
+      "problem_name": "G Group",
+      "owner": "Admin",
+      "project_start_date": "2025-07-29 00:00:00",
+      "display_week": 1,
+      "tasks": {},
+      "created_date": "2025-07-29 11:01:45.778696",
+      "last_modified": "2025-07-29 11:01:45.778698"
+    },
+    "e4081e1e-99e9-4529-af53-1b1054edc502": {
+      "problem_name": "Jefferson",
+      "owner": "Admin",
+      "project_start_date": "2025-07-29 00:00:00",
+      "display_week": 1,
+      "tasks": {},
+      "created_date": "2025-07-29 11:09:26.619218",
+      "last_modified": "2025-07-29 11:09:26.619219"
+    },
+    "b3cbcb5e-7bf5-4466-9403-33c1e0181811": {
+      "problem_name": "Zoran",
+      "owner": "Admin",
+      "project_start_date": "2025-07-29 00:00:00",
+      "display_week": 1,
+      "tasks": {},
+      "created_date": "2025-07-29 11:09:37.814228",
+      "last_modified": "2025-07-29 11:09:37.814231"
+    }
+  },
+  "users": [
+    "Admin",
+    "Andrew",
+    "Stanley",
+    "Haris",
+    "Ethan"
+  ]
+}
