@@ -108,10 +108,6 @@ def can_edit_file(file_owner):
 def show_login_form():
     st.title("🔐 Login to Problem File Tracker")
     
-    # Show warning if using default credentials
-    if not os.path.exists(CREDENTIALS_FILE):
-        st.warning("⚠️ Using default credentials! Please create a credentials.toml file for security.")
-    
     with st.form("login_form"):
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
