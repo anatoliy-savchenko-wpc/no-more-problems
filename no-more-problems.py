@@ -26,7 +26,6 @@ CREDENTIALS_FILE = "secrets.toml"
 
 # Load user credentials from TOML file
 def load_credentials():
-    """Load user credentials from TOML file"""
     try:
         return st.secrets["credentials"]
     except Exception as e:
