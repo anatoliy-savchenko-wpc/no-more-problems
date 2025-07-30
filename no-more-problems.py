@@ -10,6 +10,7 @@ import uuid
 from typing import Dict, List, Any
 import io
 import hashlib
+import toml
 
 # Configure page
 st.set_page_config(
@@ -21,21 +22,50 @@ st.set_page_config(
 
 # Data storage path
 DATA_FILE = "problem_tracker_data.json"
+CREDENTIALS_FILE = "secrets.toml"
 
-# User credentials (in production, use proper authentication)
-USER_CREDENTIALS = {
-    'Admin': 'R0gueL3ader',
-    'Andrew': 'p@ssword1',
-    'Stanley': 'p@ssword1',
-    'Haris': 'p@ssword1',
-    'Ethan': 'p@ssword1'
-}
+# Load user credentials from TOML file
+def load_credentials():
+    """Load user credentials from TOML file"""
+    try:
+        if os.path.exists(CREDENTIALS_FILE):
+            with open(CREDENTIALS_FILE, 'r') as f:
+                config = toml.load(f)
+                return config.get('credentials', {})
+        else:
+            # Fallback credentials if file doesn't exist
+            st.error(f"⚠️ Credentials file '{CREDENTIALS_FILE}' not found! Using default credentials.")
+            return {
+                'Admin': 'defaultadmin',
+                'Andrew': 'defaultpass',
+                'Stanley': 'defaultpass',
+                'Haris': 'defaultpass',
+                'Ethan': 'defaultpass'
+            }
+    except Exception as e:
+        st.error(f"Error loading credentials: {e}")
+        return {}
+
+# Save credentials to TOML file
+def save_credentials(credentials):
+    """Save user credentials to TOML file"""
+    try:
+        config = {'credentials': credentials}
+        with open(CREDENTIALS_FILE, 'w') as f:
+            toml.dump(config, f)
+        return True
+    except Exception as e:
+        st.error(f"Error saving credentials: {e}")
+        return False
+
+# Load credentials at startup
+USER_CREDENTIALS = load_credentials()
 
 # Initialize session state
 if 'data' not in st.session_state:
     st.session_state.data = {
         'problem_files': {},
-        'users': ['Admin', 'Andrew', 'Stanley', 'Haris', 'Ethan']
+        'users': list(USER_CREDENTIALS.keys())  # Use keys from credentials file
     }
 
 if 'current_file_id' not in st.session_state:
@@ -92,15 +122,19 @@ def can_edit_file(file_owner):
 def show_login_form():
     st.title("🔐 Login to Problem File Tracker")
     
+    # Show warning if using default credentials
+    if not os.path.exists(CREDENTIALS_FILE):
+        st.warning("⚠️ Using default credentials! Please create a credentials.toml file for security.")
+    
     with st.form("login_form"):
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            username = st.selectbox("Select User:", list(USER_CREDENTIALS.keys()))
+            username = st.selectbox("Select User:", list(USER_CREDENTIALS.keys()) if USER_CREDENTIALS else ["No users available"])
             password = st.text_input("Password:", type="password")
             submitted = st.form_submit_button("Login", use_container_width=True)
             
             if submitted:
-                if authenticate_user(username, password):
+                if USER_CREDENTIALS and authenticate_user(username, password):
                     st.session_state.authenticated = True
                     st.session_state.current_user = username
                     st.session_state.user_role = get_user_role(username)
@@ -838,11 +872,15 @@ else:
                 if st.form_submit_button("Add User"):
                     if new_user and new_user not in st.session_state.data['users']:
                         st.session_state.data['users'].append(new_user)
-                        # Add to credentials (in production, this should be handled more securely)
+                        # Add to credentials
                         USER_CREDENTIALS[new_user] = new_user_password
-                        save_data()
-                        st.success(f"User '{new_user}' added!")
-                        st.rerun()
+                        # Save credentials to TOML file
+                        if save_credentials(USER_CREDENTIALS):
+                            save_data()
+                            st.success(f"User '{new_user}' added!")
+                            st.rerun()
+                        else:
+                            st.error("Failed to save credentials!")
                     elif new_user in st.session_state.data['users']:
                         st.error("User already exists!")
             
@@ -861,6 +899,7 @@ else:
                         # Remove from credentials
                         if user in USER_CREDENTIALS:
                             del USER_CREDENTIALS[user]
+                            save_credentials(USER_CREDENTIALS)
                         save_data()
                         st.rerun()
             
@@ -879,8 +918,11 @@ else:
                 if st.form_submit_button("Change Password", use_container_width=True):
                     if new_password == confirm_password and new_password:
                         USER_CREDENTIALS[user_to_change] = new_password
-                        st.success(f"✅ Password updated for {user_to_change}!")
-                        st.info(f"New password: `{new_password}`")
+                        if save_credentials(USER_CREDENTIALS):
+                            st.success(f"✅ Password updated for {user_to_change}!")
+                            st.info(f"New password: `{new_password}`")
+                        else:
+                            st.error("❌ Failed to save credentials!")
                     elif new_password != confirm_password:
                         st.error("❌ Passwords do not match!")
                     else:
@@ -892,13 +934,34 @@ else:
                 for user, password in USER_CREDENTIALS.items():
                     st.write(f"• **{user}:** `{password}`")
             
+            # Credentials file status
+            st.subheader("📁 Credentials File Status")
+            if os.path.exists(CREDENTIALS_FILE):
+                st.success(f"✅ Credentials file exists: `{CREDENTIALS_FILE}`")
+                # Show file contents
+                with st.expander("📄 View Credentials File Content"):
+                    try:
+                        with open(CREDENTIALS_FILE, 'r') as f:
+                            content = f.read()
+                        st.code(content, language="toml")
+                    except Exception as e:
+                        st.error(f"Error reading credentials file: {e}")
+            else:
+                st.error(f"❌ Credentials file not found: `{CREDENTIALS_FILE}`")
+                if st.button("📄 Create Credentials File"):
+                    if save_credentials(USER_CREDENTIALS):
+                        st.success("✅ Credentials file created successfully!")
+                        st.rerun()
+                    else:
+                        st.error("❌ Failed to create credentials file!")
+            
             # Data cleanup
             st.subheader("⚠️ Danger Zone")
             if st.button("🗑️ Clear All Data", type="secondary"):
                 if st.checkbox("I understand this will delete all data"):
                     st.session_state.data = {
                         'problem_files': {},
-                        'users': ['Admin', 'John Doe', 'Jane Smith', 'Mike Johnson', 'Sarah Wilson']
+                        'users': list(USER_CREDENTIALS.keys())
                     }
                     save_data()
                     st.success("All data cleared!")
@@ -910,9 +973,15 @@ else:
 
     # Footer
     st.sidebar.markdown("---")
-    st.sidebar.markdown("🔧 **Problem File Tracker v2.0**")
-    st.sidebar.markdown("**With Authentication**")
+    st.sidebar.markdown("🔧 **Problem File Tracker v2.1**")
+    st.sidebar.markdown("**With TOML Credentials**")
     st.sidebar.markdown(f"Last saved: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    # Show credentials file status in sidebar
+    if os.path.exists(CREDENTIALS_FILE):
+        st.sidebar.markdown("✅ **Credentials:** Secure TOML file")
+    else:
+        st.sidebar.markdown("❌ **Credentials:** Missing TOML file")
     
     # Show user permissions info
     if st.sidebar.expander("ℹ️ Your Permissions"):
