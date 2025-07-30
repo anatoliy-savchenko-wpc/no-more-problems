@@ -28,22 +28,9 @@ CREDENTIALS_FILE = "secrets.toml"
 def load_credentials():
     """Load user credentials from TOML file"""
     try:
-        if os.path.exists(CREDENTIALS_FILE):
-            with open(CREDENTIALS_FILE, 'r') as f:
-                config = toml.load(f)
-                return config.get('credentials', {})
-        else:
-            # Fallback credentials if file doesn't exist
-            st.error(f"⚠️ Credentials file '{CREDENTIALS_FILE}' not found! Using default credentials.")
-            return {
-                'Admin': 'defaultadmin',
-                'Andrew': 'defaultpass',
-                'Stanley': 'defaultpass',
-                'Haris': 'defaultpass',
-                'Ethan': 'defaultpass'
-            }
+        return st.secrets["credentials"]
     except Exception as e:
-        st.error(f"Error loading credentials: {e}")
+        st.error(f"Error loading credentials from secrets: {e}")
         return {}
 
 # Save credentials to TOML file
