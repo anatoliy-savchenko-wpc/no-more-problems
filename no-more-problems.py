@@ -472,7 +472,7 @@ else:
             padding: 0 !important;
             text-align: left !important;
             font-size: 1.7rem !important;
-            font-weight: 600 !important;
+            font-weight: 900 !important;
             box-shadow: none !important;
         }
         .element-container:has(#button-after) + button:hover {
