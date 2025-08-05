@@ -959,6 +959,7 @@ else:
     st.sidebar.markdown("**With TOML Credentials**")
     st.sidebar.markdown(f"Last saved: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
+    '''
     # Show credentials file status in sidebar
     if os.path.exists(CREDENTIALS_FILE):
         st.sidebar.markdown("✅ **Credentials:** Secure TOML file")
@@ -980,3 +981,4 @@ else:
             st.sidebar.write("✅ Edit assigned tasks")
             st.sidebar.write("❌ Delete items")
             st.sidebar.write("❌ Data management")
+    '''
