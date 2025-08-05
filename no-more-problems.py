@@ -455,6 +455,30 @@ else:
         st.session_state.current_file_id = None
         st.rerun()  # or st.experimental_rerun() on older versions
     
+    # Inject CSS to style only the first stButton (our home button)
+    st.markdown(
+        """
+        <style>
+        /* Style only the first button in the sidebar (our home button) */
+        div[data-testid="stSidebar"] .stButton:nth-of-type(1) > button {
+            background-color: transparent;
+            border: none;
+            color: inherit;
+            padding: 0;
+            font-size: 1.3rem;
+            font-weight: 600;
+            text-align: left;
+            box-shadow: none;
+        }
+        div[data-testid="stSidebar"] .stButton:nth-of-type(1) > button:hover {
+            color: #2f74c0; /* optional hover colour */
+            background: none;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     # User info and logout
     st.sidebar.markdown(f"👤 **Logged in as:** {st.session_state.current_user}")
     st.sidebar.markdown(f"🔑 **Role:** {st.session_state.user_role}")
