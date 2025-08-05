@@ -448,9 +448,12 @@ if not st.session_state.authenticated:
     
     show_login_form()
 else:
-    # Sidebar with user info and navigation
-    dashboard_url = "https://no-more-problemspy.streamlit.app/#problem-file-tracker-dashboard"
-    st.sidebar.title(f"[🔧 Problem File Tracker]({dashboard_url})")
+
+    if st.sidebar.button("🔧 Problem File Tracker", use_container_width=True):
+        # reset page and any other state you want
+        st.session_state.page = "#problem-file-tracker-dashboard"
+        st.session_state.current_file_id = None
+        st.rerun()  # or st.experimental_rerun() on older versions
     
     # User info and logout
     st.sidebar.markdown(f"👤 **Logged in as:** {st.session_state.current_user}")
