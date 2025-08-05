@@ -450,7 +450,7 @@ if not st.session_state.authenticated:
 else:
     # Sidebar with user info and navigation
     dashboard_url = "https://no-more-problemspy.streamlit.app/#problem-file-tracker-dashboard"
-    st.sidebar.title(f"[🔧 Problem File Tracker]({dashboard_url}")
+    st.sidebar.title(f"[🔧 Problem File Tracker]({dashboard_url})")
     
     # User info and logout
     st.sidebar.markdown(f"👤 **Logged in as:** {st.session_state.current_user}")
