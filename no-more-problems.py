@@ -453,30 +453,6 @@ else:
         st.session_state.current_file_id = None
         st.rerun()
 
-    # Add CSS to make that first sidebar button look like a title
-    st.markdown(
-        """
-        <style>
-        /* Select only the first stButton in the sidebar and override its styling */
-        div[data-testid="stSidebar"] .stButton:nth-of-type(1) > button {
-            background-color: transparent !important;
-            border: none !important;
-            color: inherit !important;
-            padding: 0 !important;
-            font-size: 1.3rem !important;
-            font-weight: 600 !important;
-            text-align: left !important;
-            box-shadow: none !important;
-        }
-        div[data-testid="stSidebar"] .stButton:nth-of-type(1) > button:hover {
-            background-color: transparent !important;
-            color: #2f74c0 !important; /* optional hover colour */
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
     # User info and logout
     st.sidebar.markdown(f"👤 **Logged in as:** {st.session_state.current_user}")
     st.sidebar.markdown(f"🔑 **Role:** {st.session_state.user_role}")
