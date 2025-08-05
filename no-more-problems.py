@@ -452,7 +452,7 @@ else:
     with st.sidebar:
         # Open a div so we can target just this button
         st.markdown("<div id='home-btn-wrapper'>", unsafe_allow_html=True)
-
+        st.markdown('<span id="button-after"></span>', unsafe_allow_html=True)
         if st.button("🔧 Problem File Dashboard", key="home", use_container_width=True):
             # reset page and any other state you want
             st.session_state.page = "Dashboard"
@@ -465,8 +465,7 @@ else:
     # Inject CSS to style only the button inside #home-btn-wrapper
     st.markdown("""
         <style>
-        /* Style the dashboard button: larger text, no border/background, left aligned */
-        #home-btn-wrapper button {
+            .element-container:has(#button-after) + div button {
             background-color: transparent !important;
             border: none !important;
             color: inherit !important;
@@ -480,9 +479,7 @@ else:
             color: #2f74c0 !important; /* optional hover colour */
             background-color: transparent !important;
         }
-        </style>
-        """,
-        unsafe_allow_html=True
+    }</style>""", unsafe_allow_html=True
     )
 
     # User info and logout
