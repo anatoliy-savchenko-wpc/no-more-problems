@@ -956,29 +956,4 @@ else:
     # Footer
     st.sidebar.markdown("---")
     st.sidebar.markdown("🔧 **Problem File Tracker v2.1**")
-    # st.sidebar.markdown("**With TOML Credentials**")
     st.sidebar.markdown(f"Last saved: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    
-    '''
-    # Show credentials file status in sidebar
-    if os.path.exists(CREDENTIALS_FILE):
-        st.sidebar.markdown("✅ **Credentials:** Secure TOML file")
-    else:
-        st.sidebar.markdown("❌ **Credentials:** Missing TOML file")
-    
-    # Show user permissions info
-    if st.sidebar.expander("ℹ️ Your Permissions"):
-        if st.session_state.user_role == 'Admin':
-            st.sidebar.write("✅ View all files")
-            st.sidebar.write("✅ Edit all files")
-            st.sidebar.write("✅ Delete items")
-            st.sidebar.write("✅ Data management")
-            st.sidebar.write("✅ User management")
-        else:
-            st.sidebar.write("✅ View your files")
-            st.sidebar.write("✅ View assigned tasks")
-            st.sidebar.write("✅ Edit your files")
-            st.sidebar.write("✅ Edit assigned tasks")
-            st.sidebar.write("❌ Delete items")
-            st.sidebar.write("❌ Data management")
-    '''
