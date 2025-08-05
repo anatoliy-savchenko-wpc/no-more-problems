@@ -449,11 +449,36 @@ if not st.session_state.authenticated:
     show_login_form()
 else:
 
-    if st.sidebar.button("🔧 Problem File Tracker", use_container_width=True):
-        # reset page and any other state you want
-        st.session_state.page = "#problem-file-tracker-dashboard"
-        st.session_state.current_file_id = None
-        st.rerun()  # or st.experimental_rerun() on older versions
+    # Inject some CSS to strip the default button styling in the sidebar
+    st.markdown(
+        """
+        <style>
+        /* Target buttons inside the sidebar */
+        div[data-testid="stSidebar"] .stButton > button {
+            background: none;
+            border: none;
+            color: inherit;
+            padding: 0;
+            font-size: 1.25rem;  /* adjust to taste */
+            font-weight: 600;
+            cursor: pointer;
+        }
+        /* Optional: style the hover state */
+        div[data-testid="stSidebar"] .stButton > button:hover {
+            color: #2f74c0; /* use your app’s primary colour */
+            background: none;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Sidebar with "title button"
+    with st.sidebar:
+        if st.button("🔧 Problem File Dashboard", use_container_width=True):
+            st.session_state.page = "Dashboard"
+            st.session_state.current_file_id = None
+            st.rerun()
     
     # User info and logout
     st.sidebar.markdown(f"👤 **Logged in as:** {st.session_state.current_user}")
