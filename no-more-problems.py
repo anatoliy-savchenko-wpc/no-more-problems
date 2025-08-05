@@ -449,7 +449,7 @@ if not st.session_state.authenticated:
     show_login_form()
 else:
 
-    if st.sidebar.button("🔧 Problem File Dashboard", use_container_width=True):
+    if st.sidebar.button("🔧Problem File Dashboard", use_container_width=True):
         # reset page and any other state you want
         st.session_state.page = "#problem-file-tracker-dashboard"
         st.session_state.current_file_id = None
