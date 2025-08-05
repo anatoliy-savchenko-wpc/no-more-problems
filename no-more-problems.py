@@ -448,20 +448,10 @@ if not st.session_state.authenticated:
     
     show_login_form()
 else:
-    dashboard_url = "#problem-file-tracker-dashboard"
-    st.sidebar.markdown(
-        f"""
-        <a href="{dashboard_url}" target="_self"
-           style="text-decoration: none;
-                  color: inherit;
-                  font-size: 1.3rem;
-                  font-weight: 600;
-                  display: block;">
-            🔧 Problem&nbsp;File&nbsp;Dashboard
-        </a>
-        """,
-        unsafe_allow_html=True,
-    )
+    if st.sidebar.button("🔧 Problem File Dashboard", key="home", use_container_width=True):
+        st.session_state.page = "Dashboard"
+        st.session_state.current_file_id = None
+        st.rerun()
 
     # User info and logout
     st.sidebar.markdown(f"👤 **Logged in as:** {st.session_state.current_user}")
@@ -487,7 +477,6 @@ else:
 
     # Main content based on page selection
     if page == "Dashboard":
-        st.markdown('<div id="problem-file-tracker-dashboard"></div>', unsafe_allow_html=True)
         st.title("📊 Problem File Tracker Dashboard")
         
         accessible_files = get_accessible_files()
