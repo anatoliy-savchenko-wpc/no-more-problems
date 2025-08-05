@@ -448,31 +448,29 @@ if not st.session_state.authenticated:
     
     show_login_form()
 else:
-
-    if st.sidebar.button("🔧Problem File Dashboard", use_container_width=True):
-        # reset page and any other state you want
-        st.session_state.page = "#problem-file-tracker-dashboard"
+    if st.sidebar.button("🔧 Problem File Dashboard", key="home", use_container_width=True):
+        st.session_state.page = "Dashboard"
         st.session_state.current_file_id = None
-        st.rerun()  # or st.experimental_rerun() on older versions
-    
-    # Inject CSS to style only the first stButton (our home button)
+        st.rerun()
+
+    # Add CSS to make that first sidebar button look like a title
     st.markdown(
         """
         <style>
-        /* Style only the first button in the sidebar (our home button) */
+        /* Select only the first stButton in the sidebar and override its styling */
         div[data-testid="stSidebar"] .stButton:nth-of-type(1) > button {
-            background-color: transparent;
-            border: none;
-            color: inherit;
-            padding: 0;
-            font-size: 1.3rem;
-            font-weight: 600;
-            text-align: left;
-            box-shadow: none;
+            background-color: transparent !important;
+            border: none !important;
+            color: inherit !important;
+            padding: 0 !important;
+            font-size: 1.3rem !important;
+            font-weight: 600 !important;
+            text-align: left !important;
+            box-shadow: none !important;
         }
         div[data-testid="stSidebar"] .stButton:nth-of-type(1) > button:hover {
-            color: #2f74c0; /* optional hover colour */
-            background: none;
+            background-color: transparent !important;
+            color: #2f74c0 !important; /* optional hover colour */
         }
         </style>
         """,
