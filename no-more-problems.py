@@ -453,7 +453,7 @@ else:
         # Open a div so we can target just this button
         st.markdown("<div id='home-btn-wrapper'>", unsafe_allow_html=True)
         st.markdown('<span id="button-after"></span>', unsafe_allow_html=True)
-        if st.button("🔧 Problem File Dashboard", key="home", use_container_width=True):
+        if st.button("**🔧 Problem File Dashboard**", key="home", use_container_width=True):
             # reset page and any other state you want
             st.session_state.page = "Dashboard"
             st.session_state.current_file_id = None
