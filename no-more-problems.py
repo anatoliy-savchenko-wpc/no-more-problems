@@ -471,11 +471,11 @@ else:
             color: inherit !important;
             padding: 0 !important;
             text-align: left !important;
-            font-size: 1.4rem !important;
+            font-size: 1.7rem !important;
             font-weight: 600 !important;
             box-shadow: none !important;
         }
-        #home-btn-wrapper button:hover {
+        .element-container:has(#button-after) + button:hover {
             color: #2f74c0 !important; /* optional hover colour */
             background-color: transparent !important;
         }
