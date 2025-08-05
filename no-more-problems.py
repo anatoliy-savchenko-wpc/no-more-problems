@@ -449,7 +449,8 @@ if not st.session_state.authenticated:
     show_login_form()
 else:
     # Sidebar with user info and navigation
-    st.sidebar.title("🔧 Problem File Tracker")
+    dashboard_url = "https://no-more-problemspy.streamlit.app/#problem-file-tracker-dashboard"
+    st.sidebar.title(f"[🔧 Problem File Tracker]({dashboard_url}")
     
     # User info and logout
     st.sidebar.markdown(f"👤 **Logged in as:** {st.session_state.current_user}")
@@ -1044,6 +1045,5 @@ else:
 
     # Footer
     st.sidebar.markdown("---")
-    st.sidebar.markdown("🔧 **Problem File Tracker v3.0 (Supabase)**")
-    st.sidebar.markdown(f"Last loaded: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    st.sidebar.markdown("🔧 **Problem File Tracker v3.0**")
     st.sidebar.markdown("🗄️ **Database**: Supabase (Persistent)")
