@@ -448,10 +448,42 @@ if not st.session_state.authenticated:
     
     show_login_form()
 else:
-    if st.sidebar.button("🔧 Problem File Dashboard", key="home", use_container_width=True):
-        st.session_state.page = "Dashboard"
-        st.session_state.current_file_id = None
-        st.rerun()
+    # Sidebar with user info and navigation
+    with st.sidebar:
+        # Open a div so we can target just this button
+        st.markdown("<div id='home-btn-wrapper'>", unsafe_allow_html=True)
+
+        if st.button("🔧 Problem File Dashboard", key="home", use_container_width=True):
+            # reset page and any other state you want
+            st.session_state.page = "Dashboard"
+            st.session_state.current_file_id = None
+            st.rerun()
+
+        # Close the div
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # Inject CSS to style only the button inside #home-btn-wrapper
+    st.markdown("""
+        <style>
+        /* Style the dashboard button: larger text, no border/background, left aligned */
+        #home-btn-wrapper button {
+            background-color: transparent !important;
+            border: none !important;
+            color: inherit !important;
+            padding: 0 !important;
+            text-align: left !important;
+            font-size: 1.4rem !important;
+            font-weight: 600 !important;
+            box-shadow: none !important;
+        }
+        #home-btn-wrapper button:hover {
+            color: #2f74c0 !important; /* optional hover colour */
+            background-color: transparent !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
 
     # User info and logout
     st.sidebar.markdown(f"👤 **Logged in as:** {st.session_state.current_user}")
