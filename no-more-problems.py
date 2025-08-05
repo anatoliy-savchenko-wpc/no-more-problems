@@ -11,6 +11,7 @@ from typing import Dict, List, Any
 import io
 import hashlib
 import toml
+from supabase import create_client, Client
 
 # Configure page
 st.set_page_config(
@@ -20,9 +21,12 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Data storage path
-DATA_FILE = "problem_tracker_data.json"
-CREDENTIALS_FILE = "secrets.toml"
+# Initialize Supabase client
+@st.cache_resource
+def init_supabase():
+    url = st.secrets["supabase"]["url"]
+    key = st.secrets["supabase"]["key"]
+    return create_client(url, key)
 
 # Load user credentials from TOML file
 def load_credentials():
@@ -31,18 +35,6 @@ def load_credentials():
     except Exception as e:
         st.error(f"Error loading credentials from secrets: {e}")
         return {}
-
-# Save credentials to TOML file
-def save_credentials(credentials):
-    """Save user credentials to TOML file"""
-    try:
-        config = {'credentials': credentials}
-        with open(CREDENTIALS_FILE, 'w') as f:
-            toml.dump(config, f)
-        return True
-    except Exception as e:
-        st.error(f"Error saving credentials: {e}")
-        return False
 
 # Load credentials at startup
 USER_CREDENTIALS = load_credentials()
@@ -125,42 +117,209 @@ def show_login_form():
                 else:
                     st.error("Invalid credentials!")
 
-# Load data from file
+# Supabase data functions
 def load_data():
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, 'r') as f:
-                data = json.load(f)
-                # Convert date strings back to datetime objects
-                for file_id, file_data in data.get('problem_files', {}).items():
-                    if 'project_start_date' in file_data:
-                        file_data['project_start_date'] = datetime.fromisoformat(file_data['project_start_date'])
-                    for task_id, task in file_data.get('tasks', {}).items():
-                        if 'start_date' in task:
-                            task['start_date'] = datetime.fromisoformat(task['start_date'])
-                        if 'projected_end_date' in task:
-                            task['projected_end_date'] = datetime.fromisoformat(task['projected_end_date'])
-                        for subtask_id, subtask in task.get('subtasks', {}).items():
-                            if 'start_date' in subtask:
-                                subtask['start_date'] = datetime.fromisoformat(subtask['start_date'])
-                            if 'projected_end_date' in subtask:
-                                subtask['projected_end_date'] = datetime.fromisoformat(subtask['projected_end_date'])
-                st.session_state.data = data
-        except Exception as e:
-            st.error(f"Error loading data: {e}")
-
-# Save data to file
-def save_data():
+    """Load all data from Supabase into session state"""
+    if not st.session_state.authenticated:
+        return
+        
     try:
-        # Convert datetime objects to strings for JSON serialization
-        data_copy = json.loads(json.dumps(st.session_state.data, default=str))
-        with open(DATA_FILE, 'w') as f:
-            json.dump(data_copy, f, indent=2, default=str)
+        supabase = init_supabase()
+        
+        # Load problem files with user filtering
+        if st.session_state.user_role == 'Admin':
+            # Admin sees all files
+            problem_files_response = supabase.table('problem_files').select('*').execute()
+        else:
+            # Regular users see files they own or are assigned to
+            # First get files they own
+            owned_files = supabase.table('problem_files').select('*').eq('owner', st.session_state.current_user).execute()
+            
+            # Then get files where they're assigned to subtasks
+            assigned_subtasks = supabase.table('subtasks').select('task_id').eq('assigned_to', st.session_state.current_user).execute()
+            
+            if assigned_subtasks.data:
+                task_ids = [subtask['task_id'] for subtask in assigned_subtasks.data]
+                assigned_tasks = supabase.table('tasks').select('problem_file_id').in_('id', task_ids).execute()
+                
+                if assigned_tasks.data:
+                    file_ids = [task['problem_file_id'] for task in assigned_tasks.data]
+                    assigned_files = supabase.table('problem_files').select('*').in_('id', file_ids).execute()
+                else:
+                    assigned_files = type('obj', (object,), {'data': []})
+            else:
+                assigned_files = type('obj', (object,), {'data': []})
+            
+            # Combine results
+            all_file_ids = set()
+            problem_files_data = []
+            
+            for pf in owned_files.data:
+                if pf['id'] not in all_file_ids:
+                    problem_files_data.append(pf)
+                    all_file_ids.add(pf['id'])
+                    
+            for pf in assigned_files.data:
+                if pf['id'] not in all_file_ids:
+                    problem_files_data.append(pf)
+                    all_file_ids.add(pf['id'])
+                    
+            problem_files_response = type('obj', (object,), {'data': problem_files_data})
+        
+        problem_files = {}
+        
+        for pf in problem_files_response.data:
+            file_id = pf['id']
+            
+            # Parse dates safely
+            def safe_parse_date(date_str):
+                if isinstance(date_str, str):
+                    # Handle different datetime formats
+                    date_str = date_str.replace('Z', '+00:00')
+                    if '+00:00' not in date_str and 'T' in date_str:
+                        date_str += '+00:00'
+                    return datetime.fromisoformat(date_str)
+                return date_str if isinstance(date_str, datetime) else datetime.now()
+            
+            problem_files[file_id] = {
+                'problem_name': pf['problem_name'],
+                'owner': pf['owner'],
+                'project_start_date': safe_parse_date(pf['project_start_date']),
+                'display_week': pf['display_week'],
+                'created_date': safe_parse_date(pf['created_date']),
+                'last_modified': safe_parse_date(pf['last_modified']),
+                'tasks': {}
+            }
+            
+            # Load tasks for this problem file
+            tasks_response = supabase.table('tasks').select('*').eq('problem_file_id', file_id).execute()
+            
+            for task in tasks_response.data:
+                task_id = task['id']
+                problem_files[file_id]['tasks'][task_id] = {
+                    'name': task['name'],
+                    'description': task['description'] or '',
+                    'subtasks': {}
+                }
+                
+                # Load subtasks for this task
+                subtasks_response = supabase.table('subtasks').select('*').eq('task_id', task_id).execute()
+                
+                for subtask in subtasks_response.data:
+                    subtask_id = subtask['id']
+                    problem_files[file_id]['tasks'][task_id]['subtasks'][subtask_id] = {
+                        'name': subtask['name'],
+                        'assigned_to': subtask['assigned_to'],
+                        'start_date': safe_parse_date(subtask['start_date']),
+                        'projected_end_date': safe_parse_date(subtask['projected_end_date']),
+                        'progress': subtask['progress'],
+                        'notes': subtask['notes'] or ''
+                    }
+        
+        st.session_state.data['problem_files'] = problem_files
+        
     except Exception as e:
-        st.error(f"Error saving data: {e}")
+        st.error(f"Error loading data from Supabase: {e}")
+        # Initialize empty data structure on error
+        st.session_state.data['problem_files'] = {}
 
-# Load data on startup
-load_data()
+def save_problem_file(file_id: str, file_data: dict):
+    """Save or update a problem file"""
+    try:
+        supabase = init_supabase()
+        
+        db_data = {
+            'id': file_id,
+            'problem_name': file_data['problem_name'],
+            'owner': file_data['owner'],
+            'project_start_date': file_data['project_start_date'].isoformat(),
+            'display_week': file_data['display_week']
+        }
+        
+        # Use upsert to handle both insert and update
+        supabase.table('problem_files').upsert(db_data).execute()
+        return True
+        
+    except Exception as e:
+        st.error(f"Error saving problem file: {e}")
+        return False
+
+def save_task(problem_file_id: str, task_id: str, task_data: dict):
+    """Save or update a task"""
+    try:
+        supabase = init_supabase()
+        
+        db_data = {
+            'id': task_id,
+            'problem_file_id': problem_file_id,
+            'name': task_data['name'],
+            'description': task_data.get('description', '')
+        }
+        
+        supabase.table('tasks').upsert(db_data).execute()
+        return True
+        
+    except Exception as e:
+        st.error(f"Error saving task: {e}")
+        return False
+
+def save_subtask(task_id: str, subtask_id: str, subtask_data: dict):
+    """Save or update a subtask"""
+    try:
+        supabase = init_supabase()
+        
+        db_data = {
+            'id': subtask_id,
+            'task_id': task_id,
+            'name': subtask_data['name'],
+            'assigned_to': subtask_data['assigned_to'],
+            'start_date': subtask_data['start_date'].isoformat(),
+            'projected_end_date': subtask_data['projected_end_date'].isoformat(),
+            'progress': subtask_data['progress'],
+            'notes': subtask_data.get('notes', '')
+        }
+        
+        supabase.table('subtasks').upsert(db_data).execute()
+        return True
+        
+    except Exception as e:
+        st.error(f"Error saving subtask: {e}")
+        return False
+
+def delete_problem_file(file_id: str):
+    """Delete a problem file and all related data"""
+    try:
+        supabase = init_supabase()
+        supabase.table('problem_files').delete().eq('id', file_id).execute()
+        return True
+    except Exception as e:
+        st.error(f"Error deleting problem file: {e}")
+        return False
+
+def delete_task(task_id: str):
+    """Delete a task and all its subtasks"""
+    try:
+        supabase = init_supabase()
+        supabase.table('tasks').delete().eq('id', task_id).execute()
+        return True
+    except Exception as e:
+        st.error(f"Error deleting task: {e}")
+        return False
+
+def delete_subtask(subtask_id: str):
+    """Delete a subtask"""
+    try:
+        supabase = init_supabase()
+        supabase.table('subtasks').delete().eq('id', subtask_id).execute()
+        return True
+    except Exception as e:
+        st.error(f"Error deleting subtask: {e}")
+        return False
+
+# Legacy function - now replaced by Supabase functions
+def save_data():
+    """Legacy function - individual saves now handle persistence"""
+    pass
 
 # Helper function to calculate task progress
 def calculate_task_progress(subtasks):
@@ -194,6 +353,9 @@ def check_overdue_and_update(problem_file):
                 # Push forward by 1 week
                 subtask['projected_end_date'] += timedelta(weeks=1)
                 subtask['notes'] += f"\n[AUTO-UPDATE {datetime.now().strftime('%Y-%m-%d')}]: Deadline pushed forward due to overdue status."
+                
+                # Save the updated subtask to database
+                save_subtask(task_id, subtask_id, subtask)
                 updated = True
     
     return updated
@@ -271,6 +433,10 @@ def get_accessible_files():
                             accessible_files[file_id] = file_data
                             break
         return accessible_files
+
+# Load data after authentication
+if st.session_state.authenticated:
+    load_data()
 
 # Main application logic
 if not st.session_state.authenticated:
@@ -426,7 +592,7 @@ else:
                 if st.form_submit_button("Create Problem File"):
                     if problem_name:
                         file_id = str(uuid.uuid4())
-                        st.session_state.data['problem_files'][file_id] = {
+                        file_data = {
                             'problem_name': problem_name,
                             'owner': owner,
                             'project_start_date': datetime.combine(project_start_date, datetime.min.time()),
@@ -435,9 +601,13 @@ else:
                             'created_date': datetime.now(),
                             'last_modified': datetime.now()
                         }
-                        save_data()
-                        st.success(f"Problem file '{problem_name}' created successfully!")
-                        st.rerun()
+                        
+                        if save_problem_file(file_id, file_data):
+                            st.session_state.data['problem_files'][file_id] = file_data
+                            st.success(f"Problem file '{problem_name}' created successfully!")
+                            st.rerun()
+                        else:
+                            st.error("Failed to create problem file.")
                     else:
                         st.error("Please fill in all required fields.")
         
@@ -470,7 +640,6 @@ else:
                 
                 # Check for overdue tasks and update (only if can edit)
                 if can_edit and check_overdue_and_update(problem_file):
-                    save_data()
                     st.warning("Some overdue tasks have been automatically updated with new deadlines.")
                 
                 # File metadata editing (only if can edit)
@@ -499,9 +668,12 @@ else:
                                 problem_file['project_start_date'] = datetime.combine(new_start_date, datetime.min.time())
                                 problem_file['display_week'] = new_display_week
                                 problem_file['last_modified'] = datetime.now()
-                                save_data()
-                                st.success("Metadata updated successfully!")
-                                st.rerun()
+                                
+                                if save_problem_file(selected_file_id, problem_file):
+                                    st.success("Metadata updated successfully!")
+                                    st.rerun()
+                                else:
+                                    st.error("Failed to update metadata.")
                 
                 # Task management
                 st.subheader("📋 Task Management")
@@ -516,14 +688,18 @@ else:
                             if st.form_submit_button("Add Main Task"):
                                 if task_name:
                                     task_id = str(uuid.uuid4())
-                                    problem_file['tasks'][task_id] = {
+                                    task_data = {
                                         'name': task_name,
                                         'description': task_description,
                                         'subtasks': {}
                                     }
-                                    save_data()
-                                    st.success(f"Main task '{task_name}' added!")
-                                    st.rerun()
+                                    
+                                    if save_task(selected_file_id, task_id, task_data):
+                                        problem_file['tasks'][task_id] = task_data
+                                        st.success(f"Main task '{task_name}' added!")
+                                        st.rerun()
+                                    else:
+                                        st.error("Failed to add task.")
                 
                 # Display and manage existing tasks
                 for task_id, task in problem_file['tasks'].items():
@@ -538,9 +714,10 @@ else:
                         with col2:
                             if can_edit and can_delete_items():
                                 if st.button("🗑️ Delete Task", key=f"delete_task_{task_id}"):
-                                    del problem_file['tasks'][task_id]
-                                    save_data()
-                                    st.rerun()
+                                    if delete_task(task_id):
+                                        del problem_file['tasks'][task_id]
+                                        st.success("Task deleted!")
+                                        st.rerun()
                         
                         # Add subtask (only if can edit)
                         if can_edit:
@@ -564,7 +741,7 @@ else:
                                 if submitted:
                                     if subtask_name and assigned_to:
                                         subtask_id = str(uuid.uuid4())
-                                        task['subtasks'][subtask_id] = {
+                                        subtask_data = {
                                             'name': subtask_name,
                                             'assigned_to': assigned_to,
                                             'start_date': datetime.combine(start_date, datetime.min.time()),
@@ -572,10 +749,14 @@ else:
                                             'progress': progress,
                                             'notes': notes
                                         }
-                                        problem_file['last_modified'] = datetime.now()
-                                        save_data()
-                                        st.success(f"Subtask '{subtask_name}' added!")
-                                        st.rerun()
+                                        
+                                        if save_subtask(task_id, subtask_id, subtask_data):
+                                            task['subtasks'][subtask_id] = subtask_data
+                                            problem_file['last_modified'] = datetime.now()
+                                            st.success(f"Subtask '{subtask_name}' added!")
+                                            st.rerun()
+                                        else:
+                                            st.error("Failed to add subtask.")
                                     else:
                                         st.error("Please fill in required fields.")
                         
@@ -649,20 +830,25 @@ else:
                                                     subtask['projected_end_date'] = datetime.combine(new_end_date, datetime.min.time())
                                                     subtask['progress'] = new_progress
                                                     subtask['notes'] = new_notes
-                                                    problem_file['last_modified'] = datetime.now()
-                                                    save_data()
-                                                    st.success("Subtask updated!")
-                                                    st.rerun()
+                                                    
+                                                    if save_subtask(task_id, subtask_to_edit, subtask):
+                                                        problem_file['last_modified'] = datetime.now()
+                                                        st.success("Subtask updated!")
+                                                        st.rerun()
+                                                    else:
+                                                        st.error("Failed to update subtask.")
                                             
                                             with col_delete:
                                                 if can_delete_items():
                                                     submitted_delete = st.form_submit_button("Delete Subtask", type="secondary")
                                                     if submitted_delete:
-                                                        del task['subtasks'][subtask_to_edit]
-                                                        problem_file['last_modified'] = datetime.now()
-                                                        save_data()
-                                                        st.success("Subtask deleted!")
-                                                        st.rerun()
+                                                        if delete_subtask(subtask_to_edit):
+                                                            del task['subtasks'][subtask_to_edit]
+                                                            problem_file['last_modified'] = datetime.now()
+                                                            st.success("Subtask deleted!")
+                                                            st.rerun()
+                                                        else:
+                                                            st.error("Failed to delete subtask.")
                                     else:
                                         st.info("You can only edit subtasks assigned to you.")
                 
@@ -816,144 +1002,48 @@ else:
                         )
             
             with col2:
-                st.subheader("Import Data")
+                st.subheader("Database Status")
                 
-                uploaded_file = st.file_uploader("Upload JSON backup", type="json")
-                if uploaded_file is not None:
-                    try:
-                        imported_data = json.load(uploaded_file)
-                        
-                        # Convert date strings back to datetime objects
-                        for file_id, file_data in imported_data.get('problem_files', {}).items():
-                            if 'project_start_date' in file_data:
-                                file_data['project_start_date'] = datetime.fromisoformat(file_data['project_start_date'])
-                            if 'created_date' in file_data:
-                                file_data['created_date'] = datetime.fromisoformat(file_data['created_date'])
-                            if 'last_modified' in file_data:
-                                file_data['last_modified'] = datetime.fromisoformat(file_data['last_modified'])
-                            for task_id, task in file_data.get('tasks', {}).items():
-                                for subtask_id, subtask in task.get('subtasks', {}).items():
-                                    subtask['start_date'] = datetime.fromisoformat(subtask['start_date'])
-                                    subtask['projected_end_date'] = datetime.fromisoformat(subtask['projected_end_date'])
-                        
-                        if st.button("Import Data (This will overwrite current data!)"):
-                            st.session_state.data = imported_data
-                            save_data()
-                            st.success("Data imported successfully!")
-                            st.rerun()
-                            
-                    except Exception as e:
-                        st.error(f"Error importing data: {e}")
+                try:
+                    supabase = init_supabase()
+                    # Test connection
+                    test_response = supabase.table('problem_files').select('*').limit(1).execute()
+                    st.success("✅ Connected to Supabase database")
+                    
+                    # Show database stats
+                    files_count = supabase.table('problem_files').select('*', count='exact').execute()
+                    tasks_count = supabase.table('tasks').select('*', count='exact').execute()
+                    subtasks_count = supabase.table('subtasks').select('*', count='exact').execute()
+                    
+                    st.info(f"📊 Database Stats:\n- Problem Files: {files_count.count}\n- Tasks: {tasks_count.count}\n- Subtasks: {subtasks_count.count}")
+                    
+                except Exception as e:
+                    st.error(f"❌ Database connection error: {e}")
             
             st.subheader("User Management")
-            
-            # Add new user
-            with st.form("add_user"):
-                new_user = st.text_input("Add New User")
-                new_user_password = st.text_input("Password", type="password", value="password")
-                if st.form_submit_button("Add User"):
-                    if new_user and new_user not in st.session_state.data['users']:
-                        st.session_state.data['users'].append(new_user)
-                        # Add to credentials
-                        USER_CREDENTIALS[new_user] = new_user_password
-                        # Save credentials to TOML file
-                        if save_credentials(USER_CREDENTIALS):
-                            save_data()
-                            st.success(f"User '{new_user}' added!")
-                            st.rerun()
-                        else:
-                            st.error("Failed to save credentials!")
-                    elif new_user in st.session_state.data['users']:
-                        st.error("User already exists!")
             
             # Current users
             st.write("**Current Users:**")
             for i, user in enumerate(st.session_state.data['users']):
-                col1, col2, col3 = st.columns([2, 1, 1])
+                col1, col2 = st.columns([3, 1])
                 with col1:
-                    st.write(f"• {user}")
-                with col2:
                     role = "Admin" if user == "Admin" else "User"
-                    st.write(f"Role: {role}")
-                with col3:
-                    if user != 'Admin' and st.button("Remove", key=f"remove_user_{i}"):
-                        st.session_state.data['users'].remove(user)
-                        # Remove from credentials
-                        if user in USER_CREDENTIALS:
-                            del USER_CREDENTIALS[user]
-                            save_credentials(USER_CREDENTIALS)
-                        save_data()
-                        st.rerun()
-            
-            # Password management
-            st.subheader("🔐 Password Management")
-            st.write("**Change user passwords:**")
-            with st.form("change_password"):
-                col1, col2 = st.columns(2)
-                with col1:
-                    user_to_change = st.selectbox("Select User:", st.session_state.data['users'])
-                    st.write(f"Current password for {user_to_change}: `{USER_CREDENTIALS.get(user_to_change, 'Not set')}`")
+                    st.write(f"• {user} (Role: {role})")
                 with col2:
-                    new_password = st.text_input("New Password:")
-                    confirm_password = st.text_input("Confirm Password:", type="password")
-                
-                if st.form_submit_button("Change Password", use_container_width=True):
-                    if new_password == confirm_password and new_password:
-                        USER_CREDENTIALS[user_to_change] = new_password
-                        if save_credentials(USER_CREDENTIALS):
-                            st.success(f"✅ Password updated for {user_to_change}!")
-                            st.info(f"New password: `{new_password}`")
-                        else:
-                            st.error("❌ Failed to save credentials!")
-                    elif new_password != confirm_password:
-                        st.error("❌ Passwords do not match!")
-                    else:
-                        st.error("❌ Password cannot be empty!")
+                    if user != 'Admin':
+                        st.write("👤 User")
             
-            # Show current passwords for reference
-            with st.expander("👀 View All Current Passwords"):
-                st.write("**Current user credentials:**")
-                for user, password in USER_CREDENTIALS.items():
-                    st.write(f"• **{user}:** `{password}`")
+            st.info("💡 **Note**: User management is now handled through Streamlit secrets. Update the credentials section in your app settings to add/remove users.")
             
-            # Credentials file status
-            st.subheader("📁 Credentials File Status")
-            if os.path.exists(CREDENTIALS_FILE):
-                st.success(f"✅ Credentials file exists: `{CREDENTIALS_FILE}`")
-                # Show file contents
-                with st.expander("📄 View Credentials File Content"):
-                    try:
-                        with open(CREDENTIALS_FILE, 'r') as f:
-                            content = f.read()
-                        st.code(content, language="toml")
-                    except Exception as e:
-                        st.error(f"Error reading credentials file: {e}")
-            else:
-                st.error(f"❌ Credentials file not found: `{CREDENTIALS_FILE}`")
-                if st.button("📄 Create Credentials File"):
-                    if save_credentials(USER_CREDENTIALS):
-                        st.success("✅ Credentials file created successfully!")
-                        st.rerun()
-                    else:
-                        st.error("❌ Failed to create credentials file!")
-            
-            # Data cleanup
-            st.subheader("⚠️ Danger Zone")
-            if st.button("🗑️ Clear All Data", type="secondary"):
-                if st.checkbox("I understand this will delete all data"):
-                    st.session_state.data = {
-                        'problem_files': {},
-                        'users': list(USER_CREDENTIALS.keys())
-                    }
-                    save_data()
-                    st.success("All data cleared!")
-                    st.rerun()
-
-    # Auto-save on any changes
-    if st.session_state.data:
-        save_data()
+            # Refresh data button
+            st.subheader("🔄 Data Refresh")
+            if st.button("🔄 Refresh Data from Database"):
+                load_data()
+                st.success("✅ Data refreshed from Supabase!")
+                st.rerun()
 
     # Footer
     st.sidebar.markdown("---")
-    st.sidebar.markdown("🔧 **Problem File Tracker v2.1**")
-    st.sidebar.markdown(f"Last saved: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    st.sidebar.markdown("🔧 **Problem File Tracker v3.0 (Supabase)**")
+    st.sidebar.markdown(f"Last loaded: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    st.sidebar.markdown("🗄️ **Database**: Supabase (Persistent)")
