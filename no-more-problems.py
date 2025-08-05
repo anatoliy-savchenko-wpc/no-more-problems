@@ -956,7 +956,7 @@ else:
     # Footer
     st.sidebar.markdown("---")
     st.sidebar.markdown("🔧 **Problem File Tracker v2.1**")
-    st.sidebar.markdown("**With TOML Credentials**")
+    # st.sidebar.markdown("**With TOML Credentials**")
     st.sidebar.markdown(f"Last saved: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
     '''
