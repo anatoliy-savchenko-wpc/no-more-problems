@@ -739,7 +739,7 @@ def show_my_problem_files():
                 st.write("👁️ View Only")
 
         with col4:
-            if can_delete_items() and selected_file_data['owner'] == st.session_state.current_user:
+            if can_delete_items():
                 if st.button("🗑️ Delete File", use_container_width=True, type="secondary"):
                     st.session_state.file_to_delete = selected_file_id
                     st.rerun()
