@@ -703,50 +703,47 @@ def show_my_problem_files():
     
     if files_data:
         df_files = pd.DataFrame(files_data)
-        
-        # File selection for actions
-        selected_indices = st.dataframe(
-            df_files.drop('ID', axis=1), 
-            use_container_width=True,
-            selection_mode="single-row"
-        )
-        
+        st.dataframe(df_files.drop('ID', axis=1), use_container_width=True)
+
+        # Manual selection dropdown
+        file_selector = {
+            f"{file['Name']} (Owner: {file['Owner']})": file["ID"]
+            for file in files_data
+        }
+
+        selected_label = st.selectbox("Select a file to manage:", list(file_selector.keys()))
+        selected_file_id = file_selector[selected_label]
+        selected_file_data = accessible_files[selected_file_id]
+
         # Action buttons
         col1, col2, col3, col4 = st.columns(4)
-        
-        if selected_indices and len(selected_indices.selection.rows) > 0:
-            selected_idx = selected_indices.selection.rows[0]
-            selected_file_id = files_data[selected_idx]['ID']
-            selected_file_data = accessible_files[selected_file_id]
-            
-            with col1:
-                if st.button("📂 Open File", use_container_width=True):
+
+        with col1:
+            if st.button("📂 Open File", use_container_width=True):
+                st.session_state.selected_file_for_view = selected_file_id
+                st.session_state.page = f"📁 {selected_file_data['problem_name']}"
+                st.rerun()
+
+        with col2:
+            if st.button("📊 View Summary", use_container_width=True):
+                st.session_state.page = "Executive Summary"
+                st.rerun()
+
+        with col3:
+            if can_edit_file(selected_file_data['owner']):
+                if st.button("✏️ Edit", use_container_width=True):
                     st.session_state.selected_file_for_view = selected_file_id
                     st.session_state.page = f"📁 {selected_file_data['problem_name']}"
                     st.rerun()
-            
-            with col2:
-                if st.button("📊 View Summary", use_container_width=True):
-                    st.session_state.page = "Executive Summary"
+            else:
+                st.write("👁️ View Only")
+
+        with col4:
+            if can_delete_items() and selected_file_data['owner'] == st.session_state.current_user:
+                if st.button("🗑️ Delete File", use_container_width=True, type="secondary"):
+                    st.session_state.file_to_delete = selected_file_id
                     st.rerun()
-            
-            with col3:
-                # Only show edit if user has permissions
-                if can_edit_file(selected_file_data['owner']):
-                    if st.button("✏️ Edit", use_container_width=True):
-                        st.session_state.selected_file_for_view = selected_file_id
-                        st.session_state.page = f"📁 {selected_file_data['problem_name']}"
-                        st.rerun()
-                else:
-                    st.write("👁️ View Only")
-            
-            with col4:
-                # Only admin can delete problem files
-                if can_delete_items() and selected_file_data['owner'] == st.session_state.current_user:
-                    if st.button("🗑️ Delete File", use_container_width=True, type="secondary"):
-                        # Confirmation dialog using session state
-                        st.session_state.file_to_delete = selected_file_id
-                        st.rerun()
+
         
         # Handle file deletion confirmation
         if hasattr(st.session_state, 'file_to_delete') and st.session_state.file_to_delete:
