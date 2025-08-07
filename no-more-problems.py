@@ -161,13 +161,27 @@ def load_comments():
         comments = {}
         for comment in comments_response.data:
             comment_id = comment['id']
+            
+            # Parse created_at date safely
+            created_at = comment.get('created_at')
+            if created_at:
+                if isinstance(created_at, str):
+                    created_at = created_at.replace('Z', '+00:00')
+                    if '+00:00' not in created_at and 'T' in created_at:
+                        created_at += '+00:00'
+                    created_at = datetime.fromisoformat(created_at)
+                elif not isinstance(created_at, datetime):
+                    created_at = datetime.now()
+            else:
+                created_at = datetime.now()
+            
             comments[comment_id] = {
-                'entity_type': comment['entity_type'],  # 'task' or 'subtask'
-                'entity_id': comment['entity_id'],
-                'user': comment['user'],
-                'text': comment['text'],
-                'created_at': datetime.fromisoformat(comment['created_at'].replace('Z', '+00:00')),
-                'parent_id': comment.get('parent_id'),  # For replies
+                'entity_type': comment.get('entity_type', ''),
+                'entity_id': comment.get('entity_id', ''),
+                'user': comment.get('user', ''),
+                'text': comment.get('text', ''),
+                'created_at': created_at,
+                'parent_id': comment.get('parent_id'),
                 'user_role': comment.get('user_role', 'User')
             }
         
@@ -182,22 +196,26 @@ def save_comment(comment_id: str, comment_data: dict):
     try:
         supabase = init_supabase()
         
+        # Prepare the data matching your schema
         db_data = {
             'id': comment_id,
-            'entity_type': comment_data['entity_type'],
-            'entity_id': comment_data['entity_id'],
-            'user': comment_data['user'],
-            'text': comment_data['text'],
-            'created_at': comment_data['created_at'].isoformat(),
+            'entity_type': comment_data.get('entity_type', ''),
+            'entity_id': comment_data.get('entity_id', ''),
+            'user': comment_data.get('user', ''),
+            'text': comment_data.get('text', ''),
             'parent_id': comment_data.get('parent_id'),
             'user_role': comment_data.get('user_role', 'User')
         }
+        
+        # Don't include created_at in the upsert - let the database handle it
+        # Your schema shows created_at with a default value
         
         supabase.table('comments').upsert(db_data).execute()
         return True
         
     except Exception as e:
         st.error(f"Error saving comment: {e}")
+        st.error(f"Debug - Comment data: {db_data}")
         return False
 
 def delete_comment(comment_id: str):
