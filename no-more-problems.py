@@ -1735,7 +1735,7 @@ def show_file_analytics(problem_file):
     
     comments_by_user = {}
     for comment in st.session_state.data.get('comments', {}).values():
-        user = comment['user']
+        user = comment['user_name']
         if user not in comments_by_user:
             comments_by_user[user] = {'total': 0, 'as_partner': 0, 'as_admin': 0, 'as_user': 0}
         comments_by_user[user]['total'] += 1
