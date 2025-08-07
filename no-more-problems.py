@@ -1043,7 +1043,7 @@ def show_recent_activity(accessible_files):
                     recent_comments.append({
                         'Project': file_data['problem_name'],
                         'Task': file_data['tasks'][comment['entity_id']]['name'],
-                        'User': comment['user'],
+                        'User_Name': comment['user'],
                         'Role': comment.get('user_role', 'User'),
                         'Comment': comment['text'][:100] + '...' if len(comment['text']) > 100 else comment['text'],
                         'Posted': comment['created_at'].strftime('%Y-%m-%d %H:%M')
@@ -1054,7 +1054,7 @@ def show_recent_activity(accessible_files):
                             recent_comments.append({
                                 'Project': file_data['problem_name'],
                                 'Task': f"{task['name']} - {task['subtasks'][comment['entity_id']]['name']}",
-                                'User': comment['user'],
+                                'User_Name': comment['user'],
                                 'Role': comment.get('user_role', 'User'),
                                 'Comment': comment['text'][:100] + '...' if len(comment['text']) > 100 else comment['text'],
                                 'Posted': comment['created_at'].strftime('%Y-%m-%d %H:%M')
