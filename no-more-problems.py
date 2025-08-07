@@ -178,7 +178,7 @@ def load_comments():
             comments[comment_id] = {
                 'entity_type': comment.get('entity_type', ''),
                 'entity_id': comment.get('entity_id', ''),
-                'user': comment.get('user', ''),
+                'user_name': comment.get('user', ''),
                 'text': comment.get('text', ''),
                 'created_at': created_at,
                 'parent_id': comment.get('parent_id'),
@@ -201,7 +201,7 @@ def save_comment(comment_id: str, comment_data: dict):
             'id': comment_id,
             'entity_type': comment_data.get('entity_type', ''),
             'entity_id': comment_data.get('entity_id', ''),
-            'user': comment_data.get('user', ''),
+            'user_name': comment_data.get('user', ''),
             'text': comment_data.get('text', ''),
             'parent_id': comment_data.get('parent_id'),
             'user_role': comment_data.get('user_role', 'User')
