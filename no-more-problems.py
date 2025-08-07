@@ -513,7 +513,7 @@ def show_comments_section(entity_type: str, entity_id: str, entity_name: str):
                     comment_data = {
                         'entity_type': entity_type,
                         'entity_id': entity_id,
-                        'user': st.session_state.current_user,
+                        'user_name': st.session_state.current_user,
                         'text': comment_text,
                         'created_at': datetime.now(),
                         'parent_id': None,
