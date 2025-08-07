@@ -563,7 +563,7 @@ def display_comment_thread(comment_id: str, comment: dict, all_comments: dict, e
             st.write(role_badge)
         
         with col2:
-            st.markdown(f"**{comment['user']}** • {comment['created_at'].strftime('%Y-%m-%d %H:%M')}")
+            st.markdown(f"**{comment['user_name']}** • {comment['created_at'].strftime('%Y-%m-%d %H:%M')}")
             st.write(comment['text'])
         
         with col3:
