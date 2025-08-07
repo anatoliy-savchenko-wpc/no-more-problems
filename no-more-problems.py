@@ -7,7 +7,7 @@ import json
 import os
 from datetime import datetime, timedelta
 import uuid
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 import io
 import hashlib
 import toml
@@ -36,15 +36,26 @@ def load_credentials():
         st.error(f"Error loading credentials from secrets: {e}")
         return {}
 
-# Load credentials at startup
+# Load user roles from TOML file
+def load_user_roles():
+    try:
+        return st.secrets.get("user_roles", {})
+    except Exception as e:
+        st.error(f"Error loading user roles from secrets: {e}")
+        return {}
+
+# Load credentials and roles at startup
 USER_CREDENTIALS = load_credentials()
+USER_ROLES = load_user_roles()
 
 # Initialize session state
 def initialize_session_state():
     if 'data' not in st.session_state:
         st.session_state.data = {
             'problem_files': {},
-            'users': list(USER_CREDENTIALS.keys())
+            'users': list(USER_CREDENTIALS.keys()),
+            'comments': {},  # Store comments
+            'contacts': {}   # Store contacts
         }
 
     if 'current_file_id' not in st.session_state:
@@ -75,8 +86,17 @@ def authenticate_user(username, password):
     return False
 
 def get_user_role(username):
-    """Get user role (Admin or User)"""
-    return 'Admin' if username == 'Admin' else 'User'
+    """Get user role (Admin, Partner, or User)"""
+    # Check if user has explicit role in USER_ROLES
+    if username in USER_ROLES:
+        return USER_ROLES[username]
+    # Default roles based on username
+    if username == 'Admin':
+        return 'Admin'
+    elif 'partner' in username.lower():
+        return 'Partner'
+    else:
+        return 'User'
 
 def logout():
     """Logout current user"""
@@ -92,15 +112,23 @@ def can_access_data_management():
 
 def can_delete_items():
     """Check if user can delete items"""
-    return st.session_state.user_role == 'Admin'
+    return st.session_state.user_role in ['Admin', 'Partner']
 
 def can_edit_all_files():
     """Check if user can edit all problem files"""
-    return st.session_state.user_role == 'Admin'
+    return st.session_state.user_role in ['Admin', 'Partner']
+
+def can_create_files():
+    """Check if user can create problem files"""
+    return st.session_state.user_role in ['Admin', 'Partner', 'User']
 
 def can_edit_file(file_owner):
     """Check if user can edit a specific file"""
-    return st.session_state.user_role == 'Admin' or st.session_state.current_user == file_owner
+    return st.session_state.user_role in ['Admin', 'Partner'] or st.session_state.current_user == file_owner
+
+def can_manage_contacts(file_owner):
+    """Check if user can manage contacts for a file"""
+    return st.session_state.user_role in ['Admin', 'Partner'] or st.session_state.current_user == file_owner
 
 # Login form
 def show_login_form():
@@ -118,10 +146,132 @@ def show_login_form():
                     st.session_state.authenticated = True
                     st.session_state.current_user = username
                     st.session_state.user_role = get_user_role(username)
-                    st.success(f"Welcome, {username}!")
+                    st.success(f"Welcome, {username}! (Role: {st.session_state.user_role})")
                     st.rerun()
                 else:
                     st.error("Invalid credentials!")
+
+# Supabase data functions for comments
+def load_comments():
+    """Load comments from Supabase"""
+    try:
+        supabase = init_supabase()
+        comments_response = supabase.table('comments').select('*').execute()
+        
+        comments = {}
+        for comment in comments_response.data:
+            comment_id = comment['id']
+            comments[comment_id] = {
+                'entity_type': comment['entity_type'],  # 'task' or 'subtask'
+                'entity_id': comment['entity_id'],
+                'user': comment['user'],
+                'text': comment['text'],
+                'created_at': datetime.fromisoformat(comment['created_at'].replace('Z', '+00:00')),
+                'parent_id': comment.get('parent_id'),  # For replies
+                'user_role': comment.get('user_role', 'User')
+            }
+        
+        st.session_state.data['comments'] = comments
+        
+    except Exception as e:
+        st.error(f"Error loading comments: {e}")
+        st.session_state.data['comments'] = {}
+
+def save_comment(comment_id: str, comment_data: dict):
+    """Save a comment to Supabase"""
+    try:
+        supabase = init_supabase()
+        
+        db_data = {
+            'id': comment_id,
+            'entity_type': comment_data['entity_type'],
+            'entity_id': comment_data['entity_id'],
+            'user': comment_data['user'],
+            'text': comment_data['text'],
+            'created_at': comment_data['created_at'].isoformat(),
+            'parent_id': comment_data.get('parent_id'),
+            'user_role': comment_data.get('user_role', 'User')
+        }
+        
+        supabase.table('comments').upsert(db_data).execute()
+        return True
+        
+    except Exception as e:
+        st.error(f"Error saving comment: {e}")
+        return False
+
+def delete_comment(comment_id: str):
+    """Delete a comment from Supabase"""
+    try:
+        supabase = init_supabase()
+        supabase.table('comments').delete().eq('id', comment_id).execute()
+        return True
+    except Exception as e:
+        st.error(f"Error deleting comment: {e}")
+        return False
+
+# Supabase data functions for contacts
+def load_contacts():
+    """Load contacts from Supabase"""
+    try:
+        supabase = init_supabase()
+        contacts_response = supabase.table('contacts').select('*').execute()
+        
+        contacts = {}
+        for contact in contacts_response.data:
+            contact_id = contact['id']
+            contacts[contact_id] = {
+                'problem_file_id': contact['problem_file_id'],
+                'name': contact['name'],
+                'organization': contact.get('organization', ''),
+                'title': contact.get('title', ''),
+                'email': contact.get('email', ''),
+                'telephone': contact.get('telephone', ''),
+                'comments': contact.get('comments', ''),
+                'added_by': contact.get('added_by', ''),
+                'created_at': datetime.fromisoformat(contact['created_at'].replace('Z', '+00:00'))
+            }
+        
+        st.session_state.data['contacts'] = contacts
+        
+    except Exception as e:
+        st.error(f"Error loading contacts: {e}")
+        st.session_state.data['contacts'] = {}
+
+def save_contact(contact_id: str, contact_data: dict):
+    """Save a contact to Supabase"""
+    try:
+        supabase = init_supabase()
+        
+        db_data = {
+            'id': contact_id,
+            'problem_file_id': contact_data['problem_file_id'],
+            'name': contact_data['name'],
+            'organization': contact_data.get('organization', ''),
+            'title': contact_data.get('title', ''),
+            'email': contact_data.get('email', ''),
+            'telephone': contact_data.get('telephone', ''),
+            'comments': contact_data.get('comments', ''),
+            'added_by': contact_data.get('added_by', ''),
+            'created_at': contact_data['created_at'].isoformat()
+        }
+        
+        supabase.table('contacts').upsert(db_data).execute()
+        return True
+        
+    except Exception as e:
+        st.error(f"Error saving contact: {e}")
+        return False
+
+def delete_contact(contact_id: str):
+    """Delete a contact from Supabase"""
+    try:
+        supabase = init_supabase()
+        supabase.table('contacts').delete().eq('id', contact_id).execute()
+        return True
+    except Exception as e:
+        st.error(f"Error deleting contact: {e}")
+        return False
 
 # Supabase data functions
 def load_data():
@@ -133,15 +283,13 @@ def load_data():
         supabase = init_supabase()
         
         # Load problem files with user filtering
-        if st.session_state.user_role == 'Admin':
-            # Admin sees all files
+        if st.session_state.user_role in ['Admin', 'Partner']:
+            # Admin and Partners see all files
             problem_files_response = supabase.table('problem_files').select('*').execute()
         else:
             # Regular users see files they own or are assigned to
-            # First get files they own
             owned_files = supabase.table('problem_files').select('*').eq('owner', st.session_state.current_user).execute()
             
-            # Then get files where they're assigned to subtasks
             assigned_subtasks = supabase.table('subtasks').select('task_id').eq('assigned_to', st.session_state.current_user).execute()
             
             if assigned_subtasks.data:
@@ -180,7 +328,6 @@ def load_data():
             # Parse dates safely
             def safe_parse_date(date_str):
                 if isinstance(date_str, str):
-                    # Handle different datetime formats
                     date_str = date_str.replace('Z', '+00:00')
                     if '+00:00' not in date_str and 'T' in date_str:
                         date_str += '+00:00'
@@ -224,9 +371,12 @@ def load_data():
         
         st.session_state.data['problem_files'] = problem_files
         
+        # Load comments and contacts
+        load_comments()
+        load_contacts()
+        
     except Exception as e:
         st.error(f"Error loading data from Supabase: {e}")
-        # Initialize empty data structure on error
         st.session_state.data['problem_files'] = {}
 
 def save_problem_file(file_id: str, file_data: dict):
@@ -239,10 +389,11 @@ def save_problem_file(file_id: str, file_data: dict):
             'problem_name': file_data['problem_name'],
             'owner': file_data['owner'],
             'project_start_date': file_data['project_start_date'].isoformat(),
-            'display_week': file_data['display_week']
+            'display_week': file_data['display_week'],
+            'created_date': file_data.get('created_date', datetime.now()).isoformat(),
+            'last_modified': datetime.now().isoformat()
         }
         
-        # Use upsert to handle both insert and update
         supabase.table('problem_files').upsert(db_data).execute()
         return True
         
@@ -321,6 +472,264 @@ def delete_subtask(subtask_id: str):
     except Exception as e:
         st.error(f"Error deleting subtask: {e}")
         return False
+
+# Comments system functions
+def show_comments_section(entity_type: str, entity_id: str, entity_name: str):
+    """Display comments section for tasks and subtasks"""
+    st.markdown(f"### 💬 Comments for {entity_name}")
+    
+    # Get comments for this entity
+    entity_comments = {}
+    for comment_id, comment in st.session_state.data.get('comments', {}).items():
+        if comment['entity_type'] == entity_type and comment['entity_id'] == entity_id:
+            entity_comments[comment_id] = comment
+    
+    # Add new comment form
+    with st.expander("➕ Add Comment", expanded=False):
+        with st.form(f"new_comment_{entity_type}_{entity_id}"):
+            comment_text = st.text_area("Your comment:", key=f"comment_text_{entity_type}_{entity_id}")
+            
+            if st.form_submit_button("Post Comment"):
+                if comment_text:
+                    comment_id = str(uuid.uuid4())
+                    comment_data = {
+                        'entity_type': entity_type,
+                        'entity_id': entity_id,
+                        'user': st.session_state.current_user,
+                        'text': comment_text,
+                        'created_at': datetime.now(),
+                        'parent_id': None,
+                        'user_role': st.session_state.user_role
+                    }
+                    
+                    if save_comment(comment_id, comment_data):
+                        st.session_state.data['comments'][comment_id] = comment_data
+                        st.success("Comment posted!")
+                        st.rerun()
+                else:
+                    st.error("Please enter a comment.")
+    
+    # Display comments with threading
+    if entity_comments:
+        # Separate root comments and replies
+        root_comments = {cid: c for cid, c in entity_comments.items() if c.get('parent_id') is None}
+        
+        # Sort by created_at (newest first)
+        sorted_comments = sorted(root_comments.items(), key=lambda x: x[1]['created_at'], reverse=True)
+        
+        for comment_id, comment in sorted_comments:
+            display_comment_thread(comment_id, comment, entity_comments, entity_type, entity_id, 0)
+    else:
+        st.info("No comments yet. Be the first to comment!")
+
+def display_comment_thread(comment_id: str, comment: dict, all_comments: dict, entity_type: str, entity_id: str, depth: int):
+    """Display a comment and its replies recursively"""
+    # Add indentation for nested replies
+    indent = "  " * depth
+    
+    # Format role badge
+    role_badge = {
+        'Admin': '👑',
+        'Partner': '🤝',
+        'User': '👤'
+    }.get(comment.get('user_role', 'User'), '👤')
+    
+    # Create container for comment
+    with st.container():
+        if depth > 0:
+            st.markdown(f"{'│ ' * depth}")
+        
+        col1, col2, col3 = st.columns([0.1, 5, 1])
+        
+        with col1:
+            st.write(role_badge)
+        
+        with col2:
+            st.markdown(f"**{comment['user']}** • {comment['created_at'].strftime('%Y-%m-%d %H:%M')}")
+            st.write(comment['text'])
+        
+        with col3:
+            # Show delete button if user can delete
+            if (comment['user'] == st.session_state.current_user or 
+                st.session_state.user_role in ['Admin', 'Partner']):
+                if st.button("🗑️", key=f"del_comment_{comment_id}"):
+                    if delete_comment(comment_id):
+                        del st.session_state.data['comments'][comment_id]
+                        st.rerun()
+        
+        # Reply button
+        if st.button(f"↩️ Reply", key=f"reply_btn_{comment_id}"):
+            st.session_state[f"replying_to_{comment_id}"] = True
+        
+        # Show reply form if replying
+        if st.session_state.get(f"replying_to_{comment_id}", False):
+            with st.form(f"reply_form_{comment_id}"):
+                reply_text = st.text_area("Your reply:", key=f"reply_text_{comment_id}")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.form_submit_button("Post Reply"):
+                        if reply_text:
+                            reply_id = str(uuid.uuid4())
+                            reply_data = {
+                                'entity_type': entity_type,
+                                'entity_id': entity_id,
+                                'user': st.session_state.current_user,
+                                'text': reply_text,
+                                'created_at': datetime.now(),
+                                'parent_id': comment_id,
+                                'user_role': st.session_state.user_role
+                            }
+                            
+                            if save_comment(reply_id, reply_data):
+                                st.session_state.data['comments'][reply_id] = reply_data
+                                st.session_state[f"replying_to_{comment_id}"] = False
+                                st.success("Reply posted!")
+                                st.rerun()
+                        else:
+                            st.error("Please enter a reply.")
+                
+                with col2:
+                    if st.form_submit_button("Cancel"):
+                        st.session_state[f"replying_to_{comment_id}"] = False
+                        st.rerun()
+        
+        # Display replies
+        replies = {cid: c for cid, c in all_comments.items() if c.get('parent_id') == comment_id}
+        if replies:
+            sorted_replies = sorted(replies.items(), key=lambda x: x[1]['created_at'])
+            for reply_id, reply in sorted_replies:
+                display_comment_thread(reply_id, reply, all_comments, entity_type, entity_id, depth + 1)
+
+# Contact management functions
+def show_contacts_section(file_id: str, problem_file: dict):
+    """Display contacts section for a problem file"""
+    st.markdown("### 📇 Contact List")
+    
+    # Check if user can manage contacts
+    can_manage = can_manage_contacts(problem_file['owner'])
+    
+    # Get contacts for this file
+    file_contacts = {}
+    for contact_id, contact in st.session_state.data.get('contacts', {}).items():
+        if contact['problem_file_id'] == file_id:
+            file_contacts[contact_id] = contact
+    
+    # Add new contact form (only if user can manage)
+    if can_manage:
+        with st.expander("➕ Add New Contact", expanded=False):
+            with st.form(f"new_contact_{file_id}"):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    contact_name = st.text_input("Name*")
+                    organization = st.text_input("Organization")
+                    title = st.text_input("Title/Position")
+                
+                with col2:
+                    email = st.text_input("Email")
+                    telephone = st.text_input("Telephone")
+                    comments = st.text_area("Comments/Notes")
+                
+                if st.form_submit_button("Add Contact"):
+                    if contact_name:
+                        contact_id = str(uuid.uuid4())
+                        contact_data = {
+                            'problem_file_id': file_id,
+                            'name': contact_name,
+                            'organization': organization,
+                            'title': title,
+                            'email': email,
+                            'telephone': telephone,
+                            'comments': comments,
+                            'added_by': st.session_state.current_user,
+                            'created_at': datetime.now()
+                        }
+                        
+                        if save_contact(contact_id, contact_data):
+                            st.session_state.data['contacts'][contact_id] = contact_data
+                            st.success("Contact added successfully!")
+                            st.rerun()
+                    else:
+                        st.error("Please enter at least the contact name.")
+    
+    # Display contacts
+    if file_contacts:
+        # Create DataFrame for display
+        contacts_list = []
+        for contact_id, contact in file_contacts.items():
+            contacts_list.append({
+                'ID': contact_id,
+                'Name': contact['name'],
+                'Organization': contact.get('organization', ''),
+                'Title': contact.get('title', ''),
+                'Email': contact.get('email', ''),
+                'Telephone': contact.get('telephone', ''),
+                'Comments': contact.get('comments', ''),
+                'Added By': contact.get('added_by', ''),
+                'Added On': contact['created_at'].strftime('%Y-%m-%d')
+            })
+        
+        df_contacts = pd.DataFrame(contacts_list)
+        
+        # Display contacts table
+        st.dataframe(df_contacts.drop('ID', axis=1), use_container_width=True)
+        
+        # Edit/Delete contacts (only if user can manage)
+        if can_manage:
+            st.markdown("#### Manage Contacts")
+            
+            contact_to_manage = st.selectbox(
+                "Select contact to edit/delete:",
+                options=[None] + list(file_contacts.keys()),
+                format_func=lambda x: "Select..." if x is None else file_contacts[x]['name'],
+                key=f"manage_contact_{file_id}"
+            )
+            
+            if contact_to_manage:
+                contact = file_contacts[contact_to_manage]
+                
+                with st.form(f"edit_contact_{contact_to_manage}"):
+                    st.write(f"**Editing: {contact['name']}**")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        new_name = st.text_input("Name*", value=contact['name'])
+                        new_organization = st.text_input("Organization", value=contact.get('organization', ''))
+                        new_title = st.text_input("Title/Position", value=contact.get('title', ''))
+                    
+                    with col2:
+                        new_email = st.text_input("Email", value=contact.get('email', ''))
+                        new_telephone = st.text_input("Telephone", value=contact.get('telephone', ''))
+                        new_comments = st.text_area("Comments/Notes", value=contact.get('comments', ''))
+                    
+                    col_update, col_delete = st.columns(2)
+                    
+                    with col_update:
+                        if st.form_submit_button("Update Contact"):
+                            if new_name:
+                                contact['name'] = new_name
+                                contact['organization'] = new_organization
+                                contact['title'] = new_title
+                                contact['email'] = new_email
+                                contact['telephone'] = new_telephone
+                                contact['comments'] = new_comments
+                                
+                                if save_contact(contact_to_manage, contact):
+                                    st.success("Contact updated!")
+                                    st.rerun()
+                            else:
+                                st.error("Name is required.")
+                    
+                    with col_delete:
+                        if st.form_submit_button("Delete Contact", type="secondary"):
+                            if delete_contact(contact_to_manage):
+                                del st.session_state.data['contacts'][contact_to_manage]
+                                st.success("Contact deleted!")
+                                st.rerun()
+    else:
+        st.info("No contacts added yet.")
 
 # Helper function to calculate task progress
 def calculate_task_progress(subtasks):
@@ -418,7 +827,7 @@ def get_accessible_files():
     if not st.session_state.authenticated:
         return {}
     
-    if st.session_state.user_role == 'Admin':
+    if st.session_state.user_role in ['Admin', 'Partner']:
         return st.session_state.data['problem_files']
     else:
         # Regular users can only see files they own or are assigned to
@@ -467,8 +876,14 @@ def show_sidebar():
             }
         </style>""", unsafe_allow_html=True)
 
-        # User info
-        st.markdown(f"👤 **Logged in as:** {st.session_state.current_user}")
+        # User info with role badge
+        role_badge = {
+            'Admin': '👑',
+            'Partner': '🤝',
+            'User': '👤'
+        }.get(st.session_state.user_role, '👤')
+        
+        st.markdown(f"{role_badge} **Logged in as:** {st.session_state.current_user}")
         st.markdown(f"🔑 **Role:** {st.session_state.user_role}")
         
         if st.button("🚪 Logout"):
@@ -496,8 +911,9 @@ def show_sidebar():
             st.session_state.page = page
         
         st.markdown("---")
-        st.markdown("🔧 **Problem File Tracker v3.1**")
+        st.markdown("🔧 **Problem File Tracker v4.0**")
         st.markdown("🗄️ **Database**: Supabase (Persistent)")
+        st.markdown("✨ **Features**: Partners, Comments, Contacts")
 
 def show_dashboard():
     """Display main dashboard"""
@@ -506,7 +922,7 @@ def show_dashboard():
     accessible_files = get_accessible_files()
     
     if not accessible_files:
-        st.info("No problem files available. Create a new one or ask an admin for access!")
+        st.info("No problem files available. Create a new one or ask an admin/partner for access!")
         if st.button("➕ Create Your First Problem File", use_container_width=True):
             st.session_state.page = "Create Problem File"
             st.rerun()
@@ -522,11 +938,25 @@ def show_dashboard():
                 # Show ownership indicator
                 ownership_indicator = "👑 Owner" if file_data['owner'] == st.session_state.current_user else f"👤 Owner: {file_data['owner']}"
                 
+                # Count comments and contacts for this file
+                comments_count = 0
+                for task in file_data['tasks'].values():
+                    comments_count += len([c for c in st.session_state.data.get('comments', {}).values() 
+                                         if c['entity_type'] == 'task' and c['entity_id'] in file_data['tasks']])
+                    for subtask_id in task['subtasks']:
+                        comments_count += len([c for c in st.session_state.data.get('comments', {}).values() 
+                                             if c['entity_type'] == 'subtask' and c['entity_id'] == subtask_id])
+                
+                contacts_count = len([c for c in st.session_state.data.get('contacts', {}).values() 
+                                    if c['problem_file_id'] == file_id])
+                
                 st.metric(
                     label=file_data['problem_name'],
                     value=f"{progress:.1f}%",
-                    delta=ownership_indicator
+                    delta=f"💬 {comments_count} | 📇 {contacts_count}"
                 )
+                
+                st.caption(ownership_indicator)
                 
                 if st.button(f"Open {file_data['problem_name']}", key=f"open_{file_id}"):
                     st.session_state.selected_file_for_view = file_id
@@ -549,62 +979,99 @@ def show_dashboard():
                 st.session_state.page = "Executive Summary"
                 st.rerun()
         
-        # Recent Notes Section
-        show_recent_notes(accessible_files)
+        # Recent Activity Section
+        show_recent_activity(accessible_files)
 
-def show_recent_notes(accessible_files):
-    """Display recent notes section"""
-    st.subheader("📝 Recent Notes & Comments")
+def show_recent_activity(accessible_files):
+    """Display recent activity including notes and comments"""
+    st.subheader("📝 Recent Activity")
     
-    all_notes = []
-    for file_id, file_data in accessible_files.items():
-        for task_id, task in file_data['tasks'].items():
-            for subtask_id, subtask in task['subtasks'].items():
-                if subtask.get('notes', '').strip():
-                    # Only show notes for tasks assigned to user or if user is admin/owner
-                    if (st.session_state.user_role == 'Admin' or 
-                        file_data['owner'] == st.session_state.current_user or 
-                        subtask['assigned_to'] == st.session_state.current_user):
-                        all_notes.append({
-                            'Project': file_data['problem_name'],
-                            'Task': f"{task['name']} - {subtask['name']}",
-                            'Assigned To': subtask['assigned_to'],
-                            'Progress': f"{subtask['progress']}%",
-                            'Notes': subtask['notes'],
-                            'Due Date': subtask['projected_end_date'].strftime('%Y-%m-%d'),
-                            'Status': '🔴 Overdue' if (subtask['projected_end_date'].date() < datetime.now().date() and subtask['progress'] < 100) else '🟢 On Track'
-                        })
+    tabs = st.tabs(["📝 Notes", "💬 Recent Comments", "📇 Recent Contacts"])
     
-    if all_notes:
-        # Filter options
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            project_filter = st.selectbox("Filter by Project:", 
-                                        ["All Projects"] + list(set([note['Project'] for note in all_notes])))
-        with col2:
-            assignee_filter = st.selectbox("Filter by Assignee:", 
-                                         ["All Assignees"] + list(set([note['Assigned To'] for note in all_notes])))
-        with col3:
-            status_filter = st.selectbox("Filter by Status:", 
-                                       ["All Status", "🟢 On Track", "🔴 Overdue"])
+    with tabs[0]:
+        # Recent Notes
+        all_notes = []
+        for file_id, file_data in accessible_files.items():
+            for task_id, task in file_data['tasks'].items():
+                for subtask_id, subtask in task['subtasks'].items():
+                    if subtask.get('notes', '').strip():
+                        # Only show notes for tasks assigned to user or if user is admin/partner/owner
+                        if (st.session_state.user_role in ['Admin', 'Partner'] or 
+                            file_data['owner'] == st.session_state.current_user or 
+                            subtask['assigned_to'] == st.session_state.current_user):
+                            all_notes.append({
+                                'Project': file_data['problem_name'],
+                                'Task': f"{task['name']} - {subtask['name']}",
+                                'Assigned To': subtask['assigned_to'],
+                                'Progress': f"{subtask['progress']}%",
+                                'Notes': subtask['notes'],
+                                'Due Date': subtask['projected_end_date'].strftime('%Y-%m-%d'),
+                                'Status': '🔴 Overdue' if (subtask['projected_end_date'].date() < datetime.now().date() and subtask['progress'] < 100) else '🟢 On Track'
+                            })
         
-        # Apply filters
-        df_notes = pd.DataFrame(all_notes)
-        filtered_notes = df_notes.copy()
-        if project_filter != "All Projects":
-            filtered_notes = filtered_notes[filtered_notes['Project'] == project_filter]
-        if assignee_filter != "All Assignees":
-            filtered_notes = filtered_notes[filtered_notes['Assigned To'] == assignee_filter]
-        if status_filter != "All Status":
-            filtered_notes = filtered_notes[filtered_notes['Status'] == status_filter]
-        
-        # Display filtered notes
-        if not filtered_notes.empty:
-            st.dataframe(filtered_notes, use_container_width=True, height=400)
+        if all_notes:
+            df_notes = pd.DataFrame(all_notes)
+            st.dataframe(df_notes, use_container_width=True, height=400)
         else:
-            st.info("No notes match the selected filters.")
-    else:
-        st.info("No notes or comments found. Add some notes to your tasks to see them here!")
+            st.info("No notes found. Add some notes to your tasks to see them here!")
+    
+    with tabs[1]:
+        # Recent Comments
+        recent_comments = []
+        for comment_id, comment in st.session_state.data.get('comments', {}).items():
+            # Check if comment belongs to an accessible file
+            for file_id, file_data in accessible_files.items():
+                if comment['entity_type'] == 'task' and comment['entity_id'] in file_data['tasks']:
+                    recent_comments.append({
+                        'Project': file_data['problem_name'],
+                        'Task': file_data['tasks'][comment['entity_id']]['name'],
+                        'User': comment['user'],
+                        'Role': comment.get('user_role', 'User'),
+                        'Comment': comment['text'][:100] + '...' if len(comment['text']) > 100 else comment['text'],
+                        'Posted': comment['created_at'].strftime('%Y-%m-%d %H:%M')
+                    })
+                elif comment['entity_type'] == 'subtask':
+                    for task_id, task in file_data['tasks'].items():
+                        if comment['entity_id'] in task['subtasks']:
+                            recent_comments.append({
+                                'Project': file_data['problem_name'],
+                                'Task': f"{task['name']} - {task['subtasks'][comment['entity_id']]['name']}",
+                                'User': comment['user'],
+                                'Role': comment.get('user_role', 'User'),
+                                'Comment': comment['text'][:100] + '...' if len(comment['text']) > 100 else comment['text'],
+                                'Posted': comment['created_at'].strftime('%Y-%m-%d %H:%M')
+                            })
+        
+        if recent_comments:
+            # Sort by date and take last 20
+            recent_comments.sort(key=lambda x: x['Posted'], reverse=True)
+            df_comments = pd.DataFrame(recent_comments[:20])
+            st.dataframe(df_comments, use_container_width=True, height=400)
+        else:
+            st.info("No comments yet. Start a conversation on any task or subtask!")
+    
+    with tabs[2]:
+        # Recent Contacts
+        recent_contacts = []
+        for contact_id, contact in st.session_state.data.get('contacts', {}).items():
+            if contact['problem_file_id'] in accessible_files:
+                recent_contacts.append({
+                    'Project': accessible_files[contact['problem_file_id']]['problem_name'],
+                    'Name': contact['name'],
+                    'Organization': contact.get('organization', ''),
+                    'Title': contact.get('title', ''),
+                    'Email': contact.get('email', ''),
+                    'Added By': contact.get('added_by', ''),
+                    'Added On': contact['created_at'].strftime('%Y-%m-%d')
+                })
+        
+        if recent_contacts:
+            # Sort by date and take last 20
+            recent_contacts.sort(key=lambda x: x['Added On'], reverse=True)
+            df_contacts = pd.DataFrame(recent_contacts[:20])
+            st.dataframe(df_contacts, use_container_width=True, height=400)
+        else:
+            st.info("No contacts added yet.")
 
 def show_create_problem_file():
     """Display create problem file page"""
@@ -614,8 +1081,8 @@ def show_create_problem_file():
         col1, col2 = st.columns(2)
         with col1:
             problem_name = st.text_input("Problem Name*")
-            # Only admin can assign to any user, others default to themselves
-            if st.session_state.user_role == 'Admin':
+            # Admin and Partners can assign to any user, others default to themselves
+            if st.session_state.user_role in ['Admin', 'Partner']:
                 owner = st.selectbox("Owner*", st.session_state.data['users'])
             else:
                 owner = st.session_state.current_user
@@ -692,11 +1159,26 @@ def show_my_problem_files():
     files_data = []
     for file_id, file_data in accessible_files.items():
         progress = calculate_project_progress(file_data['tasks'])
+        
+        # Count comments and contacts
+        comments_count = 0
+        for task in file_data['tasks'].values():
+            comments_count += len([c for c in st.session_state.data.get('comments', {}).values() 
+                                 if c['entity_type'] == 'task' and c['entity_id'] in file_data['tasks']])
+            for subtask_id in task['subtasks']:
+                comments_count += len([c for c in st.session_state.data.get('comments', {}).values() 
+                                     if c['entity_type'] == 'subtask' and c['entity_id'] == subtask_id])
+        
+        contacts_count = len([c for c in st.session_state.data.get('contacts', {}).values() 
+                            if c['problem_file_id'] == file_id])
+        
         files_data.append({
             'ID': file_id,
             'Name': file_data['problem_name'],
             'Owner': file_data['owner'],
             'Progress': f"{progress:.1f}%",
+            'Comments': comments_count,
+            'Contacts': contacts_count,
             'Created': file_data.get('created_date', datetime.now()).strftime('%Y-%m-%d'),
             'Last Modified': file_data.get('last_modified', datetime.now()).strftime('%Y-%m-%d %H:%M')
         })
@@ -739,7 +1221,7 @@ def show_my_problem_files():
                 st.write("👁️ View Only")
 
         with col4:
-            if can_delete_items():
+            if can_delete_items() and selected_file_data['owner'] == st.session_state.current_user:
                 if st.button("🗑️ Delete File", use_container_width=True, type="secondary"):
                     st.session_state.file_to_delete = selected_file_id
                     st.rerun()
@@ -751,7 +1233,7 @@ def show_my_problem_files():
             file_name = accessible_files[file_to_delete]['problem_name']
             
             st.error(f"⚠️ **Confirm Deletion of '{file_name}'**")
-            st.warning("This action cannot be undone. All tasks and subtasks will be permanently deleted.")
+            st.warning("This action cannot be undone. All tasks, subtasks, comments, and contacts will be permanently deleted.")
             
             col1, col2 = st.columns(2)
             with col1:
@@ -783,7 +1265,7 @@ def show_individual_problem_file(file_id):
     st.title(f"📁 {problem_file['problem_name']}")
     
     # Quick info bar
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         st.metric("Owner", problem_file['owner'])
     with col2:
@@ -794,30 +1276,37 @@ def show_individual_problem_file(file_id):
     with col4:
         total_subtasks = sum(len(task['subtasks']) for task in problem_file['tasks'].values())
         st.metric("Total Subtasks", total_subtasks)
+    with col5:
+        contacts_count = len([c for c in st.session_state.data.get('contacts', {}).values() 
+                            if c['problem_file_id'] == file_id])
+        st.metric("Contacts", contacts_count)
     
     # Check permissions
     can_edit = can_edit_file(problem_file['owner'])
     
-    if not can_edit:
-        st.info("👁️ **View Only Mode** - You can view this file but cannot make changes. Contact the owner for edit access.")
+    if not can_edit and st.session_state.user_role != 'Partner':
+        st.info("👁️ **View Only Mode** - You can view this file but cannot make changes. Contact the owner or a partner for edit access.")
     
     # Check for overdue tasks and update (only if can edit)
     if can_edit and check_overdue_and_update(problem_file):
         st.warning("Some overdue tasks have been automatically updated with new deadlines.")
     
     # Navigation tabs
-    tab1, tab2, tab3, tab4 = st.tabs(["📋 Tasks & Subtasks", "📊 Gantt Chart", "📝 File Settings", "📈 Analytics"])
+    tabs = st.tabs(["📋 Tasks & Subtasks", "📊 Gantt Chart", "📇 Contacts", "📝 File Settings", "📈 Analytics"])
     
-    with tab1:
+    with tabs[0]:
         show_task_management(file_id, problem_file, can_edit)
     
-    with tab2:
+    with tabs[1]:
         show_gantt_chart_tab(problem_file)
     
-    with tab3:
+    with tabs[2]:
+        show_contacts_section(file_id, problem_file)
+    
+    with tabs[3]:
         show_file_settings(file_id, problem_file, can_edit)
     
-    with tab4:
+    with tabs[4]:
         show_file_analytics(problem_file)
 
 def show_task_management(file_id, problem_file, can_edit):
@@ -867,6 +1356,10 @@ def show_task_management(file_id, problem_file, can_edit):
                             del problem_file['tasks'][task_id]
                             st.success("Task deleted!")
                             st.rerun()
+            
+            # Comments section for task
+            with st.expander(f"💬 Task Comments ({len([c for c in st.session_state.data.get('comments', {}).values() if c['entity_type'] == 'task' and c['entity_id'] == task_id])})"):
+                show_comments_section('task', task_id, task['name'])
             
             # Add subtask form (only if can edit)
             if can_edit:
@@ -925,6 +1418,11 @@ def show_subtasks_table(task_id, task, problem_file, can_edit):
     for subtask_id, subtask in task['subtasks'].items():
         is_overdue = (subtask['projected_end_date'].date() < datetime.now().date() and 
                     subtask['progress'] < 100)
+        
+        # Count comments for this subtask
+        comments_count = len([c for c in st.session_state.data.get('comments', {}).values() 
+                            if c['entity_type'] == 'subtask' and c['entity_id'] == subtask_id])
+        
         subtask_data.append({
             'ID': subtask_id,
             'Name': subtask['name'],
@@ -933,58 +1431,65 @@ def show_subtasks_table(task_id, task, problem_file, can_edit):
             'Start Date': subtask['start_date'].strftime('%Y-%m-%d'),
             'End Date': subtask['projected_end_date'].strftime('%Y-%m-%d'),
             'Status': '🔴 Overdue' if is_overdue else '🟢 On Track',
+            'Comments': comments_count,
             'Notes': subtask['notes'][:50] + '...' if len(subtask['notes']) > 50 else subtask['notes']
         })
     
     df_subtasks = pd.DataFrame(subtask_data)
     st.dataframe(df_subtasks.drop('ID', axis=1), use_container_width=True)
     
-    # Edit subtask section (only if can edit)
-    if can_edit:
-        subtask_to_edit = st.selectbox(
-            f"Select subtask to edit:",
-            options=[None] + list(task['subtasks'].keys()),
-            format_func=lambda x: "Select..." if x is None else task['subtasks'][x]['name'],
-            key=f"edit_select_{task_id}"
-        )
+    # Select subtask for editing or viewing comments
+    subtask_to_manage = st.selectbox(
+        f"Select subtask to manage:",
+        options=[None] + list(task['subtasks'].keys()),
+        format_func=lambda x: "Select..." if x is None else task['subtasks'][x]['name'],
+        key=f"manage_select_{task_id}"
+    )
+    
+    if subtask_to_manage:
+        subtask = task['subtasks'][subtask_to_manage]
         
-        if subtask_to_edit:
-            show_edit_subtask_form(task_id, subtask_to_edit, task, problem_file)
+        # Create tabs for edit and comments
+        subtask_tabs = st.tabs(["✏️ Edit Details", "💬 Comments"])
+        
+        with subtask_tabs[0]:
+            show_edit_subtask_form(task_id, subtask_to_manage, task, problem_file, can_edit)
+        
+        with subtask_tabs[1]:
+            show_comments_section('subtask', subtask_to_manage, subtask['name'])
 
-def show_edit_subtask_form(task_id, subtask_id, task, problem_file):
+def show_edit_subtask_form(task_id, subtask_id, task, problem_file, can_edit_param):
     """Display edit subtask form"""
     subtask = task['subtasks'][subtask_id]
     
     # Check if user can edit this specific subtask
-    can_edit_subtask = (st.session_state.user_role == 'Admin' or 
+    can_edit_subtask = (st.session_state.user_role in ['Admin', 'Partner'] or 
                        problem_file['owner'] == st.session_state.current_user or
                        subtask['assigned_to'] == st.session_state.current_user)
     
     if not can_edit_subtask:
-        st.info("You can only edit subtasks assigned to you.")
+        st.info("You can only edit subtasks assigned to you or if you're an admin/partner.")
         return
     
     with st.form(f"edit_subtask_{task_id}_{subtask_id}"):
         st.write(f"**Editing: {subtask['name']}**")
         ecol1, ecol2, ecol3 = st.columns(3)
         with ecol1:
-            new_subtask_name = st.text_input("Subtask Name", value=subtask['name'], key=f"edit_name_{task_id}_{subtask_id}")
-            # Only admin and owner can reassign tasks
-            if st.session_state.user_role == 'Admin' or problem_file['owner'] == st.session_state.current_user:
+            new_subtask_name = st.text_input("Subtask Name", value=subtask['name'])
+            # Only admin, partner and owner can reassign tasks
+            if st.session_state.user_role in ['Admin', 'Partner'] or problem_file['owner'] == st.session_state.current_user:
                 new_assigned_to = st.selectbox("Assigned To", st.session_state.data['users'],
-                                             index=st.session_state.data['users'].index(subtask['assigned_to']),
-                                             key=f"edit_assigned_{task_id}_{subtask_id}")
+                                             index=st.session_state.data['users'].index(subtask['assigned_to']))
             else:
                 new_assigned_to = subtask['assigned_to']
                 st.write(f"**Assigned To:** {new_assigned_to}")
         with ecol2:
-            new_start_date = st.date_input("Start Date", value=subtask['start_date'].date(), key=f"edit_start_{task_id}_{subtask_id}")
-            new_progress = st.slider("Progress %", 0, 100, subtask['progress'], key=f"edit_progress_{task_id}_{subtask_id}")
+            new_start_date = st.date_input("Start Date", value=subtask['start_date'].date())
+            new_progress = st.slider("Progress %", 0, 100, subtask['progress'])
         with ecol3:
             new_end_date = st.date_input("Projected End Date", 
-                                       value=subtask['projected_end_date'].date(),
-                                       key=f"edit_end_{task_id}_{subtask_id}")
-            new_notes = st.text_area("Notes", value=subtask['notes'], key=f"edit_notes_{task_id}_{subtask_id}")
+                                       value=subtask['projected_end_date'].date())
+            new_notes = st.text_area("Notes", value=subtask['notes'])
         
         col_update, col_delete = st.columns(2)
         with col_update:
@@ -1064,8 +1569,8 @@ def show_file_settings(file_id, problem_file, can_edit):
             col1, col2 = st.columns(2)
             with col1:
                 new_name = st.text_input("Problem Name", value=problem_file['problem_name'])
-                # Only admin can change owner
-                if st.session_state.user_role == 'Admin':
+                # Only admin and partner can change owner
+                if st.session_state.user_role in ['Admin', 'Partner']:
                     new_owner = st.selectbox("Owner", st.session_state.data['users'], 
                                             index=st.session_state.data['users'].index(problem_file['owner']))
                 else:
@@ -1107,10 +1612,25 @@ def show_file_settings(file_id, problem_file, can_edit):
     with col1:
         st.write(f"**Created:** {problem_file.get('created_date', 'Unknown').strftime('%Y-%m-%d %H:%M') if hasattr(problem_file.get('created_date'), 'strftime') else 'Unknown'}")
         st.write(f"**Total Tasks:** {len(problem_file['tasks'])}")
+        
+        # Count total comments
+        total_comments = 0
+        for task_id in problem_file['tasks']:
+            total_comments += len([c for c in st.session_state.data.get('comments', {}).values() 
+                                 if c['entity_type'] == 'task' and c['entity_id'] == task_id])
+            for subtask_id in problem_file['tasks'][task_id]['subtasks']:
+                total_comments += len([c for c in st.session_state.data.get('comments', {}).values() 
+                                     if c['entity_type'] == 'subtask' and c['entity_id'] == subtask_id])
+        st.write(f"**Total Comments:** {total_comments}")
     with col2:
         st.write(f"**Last Modified:** {problem_file.get('last_modified', 'Unknown').strftime('%Y-%m-%d %H:%M') if hasattr(problem_file.get('last_modified'), 'strftime') else 'Unknown'}")
         total_subtasks = sum(len(task['subtasks']) for task in problem_file['tasks'].values())
         st.write(f"**Total Subtasks:** {total_subtasks}")
+        
+        # Count contacts
+        contacts_count = len([c for c in st.session_state.data.get('contacts', {}).values() 
+                            if c['problem_file_id'] == file_id])
+        st.write(f"**Total Contacts:** {contacts_count}")
 
 def show_file_analytics(problem_file):
     """Display file analytics tab"""
@@ -1191,6 +1711,39 @@ def show_file_analytics(problem_file):
         
         df_workload = pd.DataFrame(workload_data)
         st.dataframe(df_workload, use_container_width=True)
+    
+    # Comments activity analysis
+    st.subheader("💬 Comments Activity")
+    
+    comments_by_user = {}
+    for comment in st.session_state.data.get('comments', {}).values():
+        user = comment['user']
+        if user not in comments_by_user:
+            comments_by_user[user] = {'total': 0, 'as_partner': 0, 'as_admin': 0, 'as_user': 0}
+        comments_by_user[user]['total'] += 1
+        role = comment.get('user_role', 'User')
+        if role == 'Partner':
+            comments_by_user[user]['as_partner'] += 1
+        elif role == 'Admin':
+            comments_by_user[user]['as_admin'] += 1
+        else:
+            comments_by_user[user]['as_user'] += 1
+    
+    if comments_by_user:
+        comments_data = []
+        for user, data in comments_by_user.items():
+            comments_data.append({
+                'User': user,
+                'Total Comments': data['total'],
+                'As Partner': data['as_partner'],
+                'As Admin': data['as_admin'],
+                'As User': data['as_user']
+            })
+        
+        df_comments = pd.DataFrame(comments_data)
+        st.dataframe(df_comments, use_container_width=True)
+    else:
+        st.info("No comments activity yet.")
 
 def show_executive_summary():
     """Display executive summary page"""
@@ -1206,6 +1759,8 @@ def show_executive_summary():
     total_files = len(accessible_files)
     overdue_count = 0
     completed_count = 0
+    total_comments = 0
+    total_contacts = 0
     
     summary_data = []
     
@@ -1226,25 +1781,46 @@ def show_executive_summary():
         if progress >= 100:
             completed_count += 1
         
+        # Count comments and contacts
+        file_comments = 0
+        for task_id in file_data['tasks']:
+            file_comments += len([c for c in st.session_state.data.get('comments', {}).values() 
+                                if c['entity_type'] == 'task' and c['entity_id'] == task_id])
+            for subtask_id in file_data['tasks'][task_id]['subtasks']:
+                file_comments += len([c for c in st.session_state.data.get('comments', {}).values() 
+                                    if c['entity_type'] == 'subtask' and c['entity_id'] == subtask_id])
+        
+        file_contacts = len([c for c in st.session_state.data.get('contacts', {}).values() 
+                           if c['problem_file_id'] == file_id])
+        
+        total_comments += file_comments
+        total_contacts += file_contacts
+        
         summary_data.append({
             'Problem File': file_data['problem_name'],
             'Owner': file_data['owner'],
             'Progress': f"{progress:.1f}%",
             'Overdue Tasks': len(overdue_tasks),
+            'Comments': file_comments,
+            'Contacts': file_contacts,
             'Status': '✅ Complete' if progress >= 100 else '🔴 Overdue' if overdue_tasks else '🟡 In Progress',
             'Last Modified': file_data.get('last_modified', datetime.now()).strftime('%Y-%m-%d %H:%M') if hasattr(file_data.get('last_modified', datetime.now()), 'strftime') else str(file_data.get('last_modified', 'N/A'))
         })
     
     # Key metrics
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
     with col1:
-        st.metric("Accessible Projects", total_files)
+        st.metric("Total Projects", total_files)
     with col2:
         st.metric("Completed", completed_count)
     with col3:
-        st.metric("With Overdue Tasks", overdue_count)
+        st.metric("With Overdue", overdue_count)
     with col4:
         st.metric("On Track", total_files - overdue_count - completed_count)
+    with col5:
+        st.metric("Total Comments", total_comments)
+    with col6:
+        st.metric("Total Contacts", total_contacts)
     
     # Summary table
     st.subheader("Project Overview")
@@ -1273,7 +1849,7 @@ def show_executive_summary():
                 if (subtask['projected_end_date'].date() < datetime.now().date() and 
                     subtask['progress'] < 100):
                     # Only show if user has access to this task
-                    if (st.session_state.user_role == 'Admin' or 
+                    if (st.session_state.user_role in ['Admin', 'Partner'] or 
                         file_data['owner'] == st.session_state.current_user or 
                         subtask['assigned_to'] == st.session_state.current_user):
                         days_overdue = (datetime.now().date() - subtask['projected_end_date'].date()).days
@@ -1292,6 +1868,41 @@ def show_executive_summary():
         st.dataframe(df_overdue, use_container_width=True)
     else:
         st.success("🎉 No overdue tasks!")
+    
+    # Partner Activity Summary (if user is admin or partner)
+    if st.session_state.user_role in ['Admin', 'Partner']:
+        st.subheader("🤝 Partner Activity Summary")
+        
+        partner_activity = {}
+        for comment in st.session_state.data.get('comments', {}).values():
+            if comment.get('user_role') == 'Partner':
+                user = comment['user']
+                if user not in partner_activity:
+                    partner_activity[user] = {'comments': 0, 'files_engaged': set()}
+                partner_activity[user]['comments'] += 1
+                
+                # Find which file this comment belongs to
+                for file_id, file_data in accessible_files.items():
+                    if comment['entity_type'] == 'task' and comment['entity_id'] in file_data['tasks']:
+                        partner_activity[user]['files_engaged'].add(file_id)
+                    elif comment['entity_type'] == 'subtask':
+                        for task in file_data['tasks'].values():
+                            if comment['entity_id'] in task['subtasks']:
+                                partner_activity[user]['files_engaged'].add(file_id)
+        
+        if partner_activity:
+            partner_data = []
+            for partner, data in partner_activity.items():
+                partner_data.append({
+                    'Partner': partner,
+                    'Total Comments': data['comments'],
+                    'Files Engaged': len(data['files_engaged'])
+                })
+            
+            df_partners = pd.DataFrame(partner_data)
+            st.dataframe(df_partners, use_container_width=True)
+        else:
+            st.info("No partner activity recorded yet.")
 
 def show_data_management():
     """Display data management page"""
@@ -1320,10 +1931,25 @@ def show_data_management():
                 summary_data = []
                 for file_id, file_data in st.session_state.data['problem_files'].items():
                     progress = calculate_project_progress(file_data['tasks'])
+                    
+                    # Count comments and contacts
+                    file_comments = 0
+                    for task_id in file_data['tasks']:
+                        file_comments += len([c for c in st.session_state.data.get('comments', {}).values() 
+                                            if c['entity_type'] == 'task' and c['entity_id'] == task_id])
+                        for subtask_id in file_data['tasks'][task_id]['subtasks']:
+                            file_comments += len([c for c in st.session_state.data.get('comments', {}).values() 
+                                                if c['entity_type'] == 'subtask' and c['entity_id'] == subtask_id])
+                    
+                    file_contacts = len([c for c in st.session_state.data.get('contacts', {}).values() 
+                                       if c['problem_file_id'] == file_id])
+                    
                     summary_data.append({
                         'Problem File': file_data['problem_name'],
                         'Owner': file_data['owner'],
                         'Progress': progress,
+                        'Comments': file_comments,
+                        'Contacts': file_contacts,
                         'Start Date': file_data['project_start_date'].strftime('%Y-%m-%d'),
                         'Last Modified': file_data['last_modified'].strftime('%Y-%m-%d %H:%M')
                     })
@@ -1350,26 +1976,46 @@ def show_data_management():
             files_count = supabase.table('problem_files').select('*', count='exact').execute()
             tasks_count = supabase.table('tasks').select('*', count='exact').execute()
             subtasks_count = supabase.table('subtasks').select('*', count='exact').execute()
+            comments_count = supabase.table('comments').select('*', count='exact').execute()
+            contacts_count = supabase.table('contacts').select('*', count='exact').execute()
             
-            st.info(f"📊 Database Stats:\n- Problem Files: {files_count.count}\n- Tasks: {tasks_count.count}\n- Subtasks: {subtasks_count.count}")
+            st.info(f"""📊 Database Stats:
+- Problem Files: {files_count.count}
+- Tasks: {tasks_count.count}
+- Subtasks: {subtasks_count.count}
+- Comments: {comments_count.count}
+- Contacts: {contacts_count.count}""")
             
         except Exception as e:
             st.error(f"❌ Database connection error: {e}")
     
     st.subheader("User Management")
     
-    # Current users
+    # Current users with roles
     st.write("**Current Users:**")
+    user_data = []
     for user in st.session_state.data['users']:
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            role = "Admin" if user == "Admin" else "User"
-            st.write(f"• {user} (Role: {role})")
-        with col2:
-            if user != 'Admin':
-                st.write("👤 User")
+        role = get_user_role(user)
+        role_badge = {
+            'Admin': '👑',
+            'Partner': '🤝',
+            'User': '👤'
+        }.get(role, '👤')
+        
+        user_data.append({
+            'User': user,
+            'Role': f"{role_badge} {role}",
+            'Type': role
+        })
     
-    st.info("💡 **Note**: User management is now handled through Streamlit secrets. Update the credentials section in your app settings to add/remove users.")
+    df_users = pd.DataFrame(user_data)
+    st.dataframe(df_users, use_container_width=True)
+    
+    st.info("""💡 **User Management Notes**: 
+- Update credentials in your Streamlit secrets to add/remove users
+- Add user roles in the 'user_roles' section of secrets
+- Partners have elevated permissions for collaboration
+- Format: username = "role" (Admin/Partner/User)""")
     
     # Refresh data button
     st.subheader("🔄 Data Refresh")
