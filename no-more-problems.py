@@ -568,7 +568,7 @@ def display_comment_thread(comment_id: str, comment: dict, all_comments: dict, e
         
         with col3:
             # Show delete button if user can delete
-            if (comment['user'] == st.session_state.current_user or 
+            if (comment['user_name'] == st.session_state.current_user or 
                 st.session_state.user_role in ['Admin', 'Partner']):
                 if st.button("🗑️", key=f"del_comment_{comment_id}"):
                     if delete_comment(comment_id):
@@ -592,7 +592,7 @@ def display_comment_thread(comment_id: str, comment: dict, all_comments: dict, e
                             reply_data = {
                                 'entity_type': entity_type,
                                 'entity_id': entity_id,
-                                'user': st.session_state.current_user,
+                                'user_name': st.session_state.current_user,
                                 'text': reply_text,
                                 'created_at': datetime.now(),
                                 'parent_id': comment_id,
