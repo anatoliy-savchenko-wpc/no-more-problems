@@ -28,6 +28,21 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Hide the default Streamlit sidebar pages
+st.markdown("""
+    <style>
+        /* Hide default Streamlit pages in sidebar */
+        [data-testid="stSidebarNav"] {
+            display: none;
+        }
+        
+        /* Optional: Remove the top padding when nav is hidden */
+        [data-testid="stSidebarContent"] {
+            padding-top: 2rem;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
 def main():
     """Main application logic"""
     # Initialize session state
