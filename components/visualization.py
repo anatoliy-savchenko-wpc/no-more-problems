@@ -9,178 +9,165 @@ from datetime import datetime, timedelta
 
 def create_gantt_chart(problem_file):
     """Create enhanced Gantt chart with boundaries and visual improvements"""
-    tasks_data = []
-    
-    # Get project dates with fallbacks
-    project_start = problem_file.get('project_start_date', datetime.now())
-    project_end = problem_file.get('project_end_date')
-    
-    # Ensure we have valid dates
-    if not project_end:
-        project_end = project_start + timedelta(days=30)
-    
-    # Convert to datetime if needed
-    if not isinstance(project_start, datetime):
-        project_start = datetime.now()
-    if not isinstance(project_end, datetime):
-        project_end = project_start + timedelta(days=30)
-    
-    for task_id, task in problem_file.get('tasks', {}).items():
-        for subtask_id, subtask in task.get('subtasks', {}).items():
-            # Determine color based on progress and status
-            is_overdue = (subtask['projected_end_date'].date() < datetime.now().date() and 
-                         subtask['progress'] < 100)
-            
-            # Check if within project bounds
-            within_bounds = (project_start.date() <= subtask['start_date'].date() <= project_end.date() and
-                           project_start.date() <= subtask['projected_end_date'].date() <= project_end.date())
-            
-            if subtask['progress'] == 100:
-                color = '#28a745'  # Green for completed
-            elif is_overdue:
-                color = '#dc3545'  # Red for overdue
-            elif subtask['progress'] > 0:
-                color = '#ffc107'  # Yellow for in progress
-            else:
-                color = '#6c757d'  # Gray for not started
-            
-            tasks_data.append({
-                'Task': f"{task['name']}<br>{subtask['name']}",
-                'Start': subtask['start_date'],
-                'Finish': subtask['projected_end_date'],
-                'Progress': subtask['progress'],
-                'Assigned To': subtask['assigned_to'],
-                'Color': color,
-                'Status': 'Overdue' if is_overdue else 'Complete' if subtask['progress'] == 100 else 'In Progress' if subtask['progress'] > 0 else 'Not Started',
-                'Within Bounds': '✅' if within_bounds else '⚠️'
-            })
-    
-    if not tasks_data:
-        return None
-    
-    df = pd.DataFrame(tasks_data)
-    
-    # Create figure
-    fig = go.Figure()
-    
-    # Add tasks as horizontal bars
-    for i, row in df.iterrows():
-        fig.add_trace(go.Scatter(
-            x=[row['Start'], row['Finish']],
-            y=[row['Task'], row['Task']],
-            mode='lines',
-            line=dict(color=row['Color'], width=20),
-            hovertemplate=(
-                f"<b>{row['Task']}</b><br>" +
-                f"Progress: {row['Progress']}%<br>" +
-                f"Assigned: {row['Assigned To']}<br>" +
-                f"Status: {row['Status']}<br>" +
-                f"Within Bounds: {row['Within Bounds']}<br>" +
-                f"Start: %{{x[0]|%Y-%m-%d}}<br>" +
-                f"End: %{{x[1]|%Y-%m-%d}}<extra></extra>"
-            ),
-            showlegend=False
-        ))
-    
-    # Add project boundaries as shapes instead of vlines to avoid the error
-    fig.add_shape(
-        type="line",
-        x0=project_start, x1=project_start,
-        y0=0, y1=1,
-        xref="x", yref="paper",
-        line=dict(color="blue", width=2, dash="dash")
-    )
-    
-    fig.add_shape(
-        type="line",
-        x0=project_end, x1=project_end,
-        y0=0, y1=1,
-        xref="x", yref="paper",
-        line=dict(color="blue", width=2, dash="dash")
-    )
-    
-    # Add today's date line
-    fig.add_shape(
-        type="line",
-        x0=datetime.now(), x1=datetime.now(),
-        y0=0, y1=1,
-        xref="x", yref="paper",
-        line=dict(color="red", width=2)
-    )
-    
-    # Add annotations for the lines
-    fig.add_annotation(
-        x=project_start, y=1.02,
-        text="Project Start",
-        showarrow=False,
-        xref="x", yref="paper",
-        font=dict(size=10, color="blue")
-    )
-    
-    fig.add_annotation(
-        x=project_end, y=1.02,
-        text="Project End",
-        showarrow=False,
-        xref="x", yref="paper",
-        font=dict(size=10, color="blue")
-    )
-    
-    fig.add_annotation(
-        x=datetime.now(), y=-0.02,
-        text="Today",
-        showarrow=False,
-        xref="x", yref="paper",
-        font=dict(size=10, color="red")
-    )
-    
-    # Calculate date range for x-axis
-    date_buffer = timedelta(days=7)
-    x_min = project_start - date_buffer
-    x_max = project_end + date_buffer
-    
-    # Update layout
-    fig.update_layout(
-        title=dict(
-            text=f"📊 Gantt Chart - {problem_file['problem_name']}",
-            font=dict(size=20)
-        ),
-        xaxis=dict(
-            title="Timeline",
-            type='date',
-            range=[x_min, x_max],
-            showgrid=True,
-            gridcolor='rgba(0,0,0,0.1)'
-        ),
-        yaxis=dict(
-            title="Tasks",
-            autorange='reversed',
-            showgrid=False
-        ),
-        height=max(400, len(tasks_data) * 60),
-        hovermode='closest',
-        plot_bgcolor='white',
-        margin=dict(l=200, r=50, t=80, b=50)
-    )
-    
-    # Add legend
-    legend_items = [
-        ('Complete', '#28a745'),
-        ('In Progress', '#ffc107'),
-        ('Not Started', '#6c757d'),
-        ('Overdue', '#dc3545')
-    ]
-    
-    for i, (label, color) in enumerate(legend_items):
-        fig.add_trace(go.Scatter(
-            x=[None],
-            y=[None],
-            mode='markers',
-            marker=dict(size=10, color=color),
+    try:
+        # Get project dates with fallbacks
+        project_start = problem_file.get('project_start_date', datetime.now())
+        project_end = problem_file.get('project_end_date')
+        
+        # Ensure we have valid dates
+        if not project_end:
+            project_end = project_start + timedelta(days=30)
+        
+        # Convert to datetime if needed
+        if not isinstance(project_start, datetime):
+            project_start = datetime.now()
+        if not isinstance(project_end, datetime):
+            project_end = project_start + timedelta(days=30)
+        
+        # Collect task data
+        tasks_data = []
+        for task_id, task in problem_file.get('tasks', {}).items():
+            for subtask_id, subtask in task.get('subtasks', {}).items():
+                # Determine status and color
+                is_overdue = (subtask['projected_end_date'].date() < datetime.now().date() and 
+                             subtask['progress'] < 100)
+                
+                within_bounds = (project_start.date() <= subtask['start_date'].date() <= project_end.date() and
+                               project_start.date() <= subtask['projected_end_date'].date() <= project_end.date())
+                
+                if subtask['progress'] == 100:
+                    color = 'Complete'
+                elif is_overdue:
+                    color = 'Overdue'
+                elif subtask['progress'] > 0:
+                    color = 'In Progress'
+                else:
+                    color = 'Not Started'
+                
+                tasks_data.append({
+                    'Task': f"{task['name']} - {subtask['name']}",
+                    'Start': subtask['start_date'].strftime('%Y-%m-%d'),
+                    'Finish': subtask['projected_end_date'].strftime('%Y-%m-%d'),
+                    'Resource': subtask['assigned_to'],
+                    'Progress': subtask['progress'],
+                    'Status': color,
+                    'Within Bounds': 'Yes' if within_bounds else 'No'
+                })
+        
+        if not tasks_data:
+            return None
+        
+        # Create DataFrame
+        df = pd.DataFrame(tasks_data)
+        
+        # Define color mapping
+        color_map = {
+            'Complete': '#28a745',
+            'In Progress': '#ffc107',
+            'Not Started': '#6c757d',
+            'Overdue': '#dc3545'
+        }
+        
+        # Create Gantt chart using plotly express
+        fig = px.timeline(
+            df,
+            x_start='Start',
+            x_end='Finish',
+            y='Task',
+            color='Status',
+            color_discrete_map=color_map,
+            hover_data=['Resource', 'Progress', 'Within Bounds'],
+            title=f"Gantt Chart - {problem_file['problem_name']}"
+        )
+        
+        # Update layout
+        fig.update_layout(
+            height=max(400, len(tasks_data) * 50),
+            xaxis_title="Timeline",
+            yaxis_title="Tasks",
             showlegend=True,
-            name=label
-        ))
-    
-    return fig
+            hovermode='closest'
+        )
+        
+        # Reverse y-axis to show tasks from top to bottom
+        fig.update_yaxes(autorange="reversed")
+        
+        # Add reference lines as shapes (not vlines)
+        # Project start line
+        fig.add_shape(
+            type="line",
+            x0=project_start.strftime('%Y-%m-%d'),
+            y0=0,
+            x1=project_start.strftime('%Y-%m-%d'),
+            y1=1,
+            xref="x",
+            yref="paper",
+            line=dict(color="blue", width=2, dash="dash"),
+        )
+        
+        # Project end line
+        fig.add_shape(
+            type="line",
+            x0=project_end.strftime('%Y-%m-%d'),
+            y0=0,
+            x1=project_end.strftime('%Y-%m-%d'),
+            y1=1,
+            xref="x",
+            yref="paper",
+            line=dict(color="blue", width=2, dash="dash"),
+        )
+        
+        # Today line
+        fig.add_shape(
+            type="line",
+            x0=datetime.now().strftime('%Y-%m-%d'),
+            y0=0,
+            x1=datetime.now().strftime('%Y-%m-%d'),
+            y1=1,
+            xref="x",
+            yref="paper",
+            line=dict(color="red", width=2, dash="solid"),
+        )
+        
+        # Add annotations for the reference lines
+        fig.add_annotation(
+            x=project_start.strftime('%Y-%m-%d'),
+            y=1.05,
+            text="Project Start",
+            showarrow=False,
+            xref="x",
+            yref="paper",
+            font=dict(size=10, color="blue"),
+            xanchor="center"
+        )
+        
+        fig.add_annotation(
+            x=project_end.strftime('%Y-%m-%d'),
+            y=1.05,
+            text="Project End",
+            showarrow=False,
+            xref="x",
+            yref="paper",
+            font=dict(size=10, color="blue"),
+            xanchor="center"
+        )
+        
+        fig.add_annotation(
+            x=datetime.now().strftime('%Y-%m-%d'),
+            y=-0.05,
+            text="Today",
+            showarrow=False,
+            xref="x",
+            yref="paper",
+            font=dict(size=10, color="red"),
+            xanchor="center"
+        )
+        
+        return fig
+        
+    except Exception as e:
+        st.error(f"Error creating Gantt chart: {str(e)}")
+        return None
 
 def show_gantt_chart_tab(problem_file):
     """Display Gantt chart tab"""
@@ -188,7 +175,8 @@ def show_gantt_chart_tab(problem_file):
     
     # Ensure project has end date
     if 'project_end_date' not in problem_file or problem_file['project_end_date'] is None:
-        problem_file['project_end_date'] = problem_file.get('project_start_date', datetime.now()) + timedelta(days=30)
+        project_start = problem_file.get('project_start_date', datetime.now())
+        problem_file['project_end_date'] = project_start + timedelta(days=30)
     
     gantt_fig = create_gantt_chart(problem_file)
     if gantt_fig:
