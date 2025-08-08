@@ -1,14 +1,22 @@
 """
-Comments system component
+Comments system component with email notifications for partner comments
 """
 import streamlit as st
 import uuid
 from datetime import datetime
 from database import save_comment, delete_comment
+from email_handler import send_partner_comment_notification
 
-def show_comments_section(entity_type: str, entity_id: str, entity_name: str):
+def show_comments_section(entity_type: str, entity_id: str, entity_name: str, file_owner: str = None, file_name: str = None):
     """Display comments section for tasks and subtasks"""
     st.markdown(f"### 💬 Comments for {entity_name}")
+    
+    # Check if current user is a partner commenting on someone else's file
+    is_partner_on_other_file = (
+        st.session_state.user_role == 'Partner' and 
+        file_owner and 
+        file_owner != st.session_state.current_user
+    )
     
     # Get comments for this entity
     entity_comments = {}
@@ -20,6 +28,10 @@ def show_comments_section(entity_type: str, entity_id: str, entity_name: str):
     with st.expander("➕ Add Comment", expanded=False):
         with st.form(f"new_comment_{entity_type}_{entity_id}"):
             comment_text = st.text_area("Your comment:", key=f"comment_text_{entity_type}_{entity_id}")
+            
+            # Show notification info if partner commenting on other's file
+            if is_partner_on_other_file:
+                st.info(f"📧 Your comment will notify {file_owner} via email")
             
             if st.form_submit_button("Post Comment"):
                 if comment_text:
@@ -36,7 +48,20 @@ def show_comments_section(entity_type: str, entity_id: str, entity_name: str):
                     
                     if save_comment(comment_id, comment_data):
                         st.session_state.data['comments'][comment_id] = comment_data
-                        st.success("Comment posted!")
+                        
+                        # Send email if partner commenting on other's file
+                        if is_partner_on_other_file and file_name:
+                            send_partner_comment_notification(
+                                file_owner=file_owner,
+                                partner_name=st.session_state.current_user,
+                                file_name=file_name,
+                                task_name=entity_name,
+                                comment_text=comment_text
+                            )
+                            st.success("Comment posted and owner notified via email!")
+                        else:
+                            st.success("Comment posted!")
+                        
                         st.rerun()
                 else:
                     st.error("Please enter a comment.")

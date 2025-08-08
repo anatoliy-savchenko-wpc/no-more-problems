@@ -2,7 +2,7 @@
 Database operations module for Supabase integration
 """
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, timedelta
 from supabase import create_client, Client
 
 # Initialize Supabase client
@@ -79,6 +79,7 @@ def load_data():
                 'problem_name': pf['problem_name'],
                 'owner': pf['owner'],
                 'project_start_date': safe_parse_date(pf['project_start_date']),
+                'project_end_date': safe_parse_date(pf.get('project_end_date', pf['project_start_date'])),
                 'display_week': pf['display_week'],
                 'created_date': safe_parse_date(pf['created_date']),
                 'last_modified': safe_parse_date(pf['last_modified']),
@@ -191,6 +192,7 @@ def save_problem_file(file_id: str, file_data: dict):
             'problem_name': file_data['problem_name'],
             'owner': file_data['owner'],
             'project_start_date': file_data['project_start_date'].isoformat(),
+            'project_end_date': file_data.get('project_end_date', file_data['project_start_date'] + timedelta(days=30)).isoformat(),
             'display_week': file_data['display_week'],
             'created_date': file_data.get('created_date', datetime.now()).isoformat(),
             'last_modified': datetime.now().isoformat()

@@ -19,6 +19,7 @@ from pages.problem_files import (
 from pages.executive_summary import show_executive_summary
 from pages.data_management import show_data_management
 from utils import can_access_data_management
+from email_handler import check_and_send_deadline_alerts
 
 # Configure page
 st.set_page_config(
@@ -51,6 +52,11 @@ def main():
     # Load data after authentication
     if st.session_state.authenticated:
         load_data()
+        
+        # Check for approaching deadlines once per session
+        if 'deadline_check_done' not in st.session_state:
+            check_and_send_deadline_alerts()
+            st.session_state.deadline_check_done = True
 
     if not st.session_state.authenticated:
         # Clear any existing session data when not authenticated

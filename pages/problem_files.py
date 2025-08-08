@@ -30,19 +30,28 @@ def show_create_problem_file():
                 st.write(f"**Owner:** {owner}")
         with col2:
             project_start_date = st.date_input("Project Start Date*", datetime.now())
+            project_end_date = st.date_input("Project End Date*", 
+                                            datetime.now() + timedelta(days=30),
+                                            min_value=project_start_date)
             display_week = st.number_input("Display Week", min_value=1, value=1)
+        
+        # Show project duration
+        if project_end_date >= project_start_date:
+            duration = (project_end_date - project_start_date).days
+            st.info(f"📅 Project Duration: {duration} days")
         
         description = st.text_area("Problem Description (Optional)")
         
         col1, col2 = st.columns(2)
         with col1:
             if st.form_submit_button("Create Problem File", use_container_width=True):
-                if problem_name:
+                if problem_name and project_end_date >= project_start_date:
                     file_id = str(uuid.uuid4())
                     file_data = {
                         'problem_name': problem_name,
                         'owner': owner,
                         'project_start_date': datetime.combine(project_start_date, datetime.min.time()),
+                        'project_end_date': datetime.combine(project_end_date, datetime.min.time()),
                         'display_week': display_week,
                         'tasks': {},
                         'created_date': datetime.now(),
@@ -59,6 +68,8 @@ def show_create_problem_file():
                         st.rerun()
                     else:
                         st.error("Failed to create problem file.")
+                elif project_end_date < project_start_date:
+                    st.error("End date must be after start date!")
                 else:
                     st.error("Please fill in all required fields.")
         
