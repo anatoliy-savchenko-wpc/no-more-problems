@@ -12,7 +12,13 @@ def create_gantt_chart(problem_file):
     tasks_data = []
     
     project_start = problem_file.get('project_start_date', datetime.now())
-    project_end = problem_file.get('project_end_date', project_start)
+    project_end = problem_file.get('project_end_date', project_start + pd.Timedelta(days=30))
+    
+    # Ensure we have datetime objects
+    if not isinstance(project_start, datetime):
+        project_start = datetime.now()
+    if not isinstance(project_end, datetime):
+        project_end = project_start + pd.Timedelta(days=30)
     
     for task_id, task in problem_file['tasks'].items():
         for subtask_id, subtask in task['subtasks'].items():
@@ -71,14 +77,14 @@ def create_gantt_chart(problem_file):
             showlegend=False
         ))
     
-    # Add project boundaries as vertical lines
-    fig.add_vline(x=project_start, line_dash="dash", line_color="blue", 
+    # Add project boundaries as vertical lines (convert to timestamp for plotly)
+    fig.add_vline(x=pd.Timestamp(project_start), line_dash="dash", line_color="blue", 
                   annotation_text="Project Start", annotation_position="top")
-    fig.add_vline(x=project_end, line_dash="dash", line_color="blue",
+    fig.add_vline(x=pd.Timestamp(project_end), line_dash="dash", line_color="blue",
                   annotation_text="Project End", annotation_position="top")
     
     # Add today's date line
-    fig.add_vline(x=datetime.now(), line_dash="solid", line_color="red",
+    fig.add_vline(x=pd.Timestamp(datetime.now()), line_dash="solid", line_color="red",
                   annotation_text="Today", annotation_position="bottom")
     
     # Update layout
@@ -90,8 +96,8 @@ def create_gantt_chart(problem_file):
         xaxis=dict(
             title="Timeline",
             type='date',
-            range=[project_start - pd.Timedelta(days=7), 
-                   project_end + pd.Timedelta(days=7)],
+            range=[pd.Timestamp(project_start) - pd.Timedelta(days=7), 
+                   pd.Timestamp(project_end) + pd.Timedelta(days=7)],
             showgrid=True,
             gridcolor='rgba(0,0,0,0.1)'
         ),
@@ -129,6 +135,10 @@ def create_gantt_chart(problem_file):
 def show_gantt_chart_tab(problem_file):
     """Display Gantt chart tab"""
     st.subheader("📈 Project Timeline")
+    
+    # Ensure project has end date
+    if 'project_end_date' not in problem_file:
+        problem_file['project_end_date'] = problem_file.get('project_start_date', datetime.now()) + pd.Timedelta(days=30)
     
     gantt_fig = create_gantt_chart(problem_file)
     if gantt_fig:
