@@ -5,23 +5,28 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime
+from datetime import datetime, timedelta
 
 def create_gantt_chart(problem_file):
     """Create enhanced Gantt chart with boundaries and visual improvements"""
     tasks_data = []
     
+    # Get project dates with fallbacks
     project_start = problem_file.get('project_start_date', datetime.now())
-    project_end = problem_file.get('project_end_date', project_start + pd.Timedelta(days=30))
+    project_end = problem_file.get('project_end_date')
     
-    # Ensure we have datetime objects
+    # Ensure we have valid dates
+    if not project_end:
+        project_end = project_start + timedelta(days=30)
+    
+    # Convert to datetime if needed
     if not isinstance(project_start, datetime):
         project_start = datetime.now()
     if not isinstance(project_end, datetime):
-        project_end = project_start + pd.Timedelta(days=30)
+        project_end = project_start + timedelta(days=30)
     
-    for task_id, task in problem_file['tasks'].items():
-        for subtask_id, subtask in task['subtasks'].items():
+    for task_id, task in problem_file.get('tasks', {}).items():
+        for subtask_id, subtask in task.get('subtasks', {}).items():
             # Determine color based on progress and status
             is_overdue = (subtask['projected_end_date'].date() < datetime.now().date() and 
                          subtask['progress'] < 100)
@@ -77,15 +82,61 @@ def create_gantt_chart(problem_file):
             showlegend=False
         ))
     
-    # Add project boundaries as vertical lines (convert to timestamp for plotly)
-    fig.add_vline(x=pd.Timestamp(project_start), line_dash="dash", line_color="blue", 
-                  annotation_text="Project Start", annotation_position="top")
-    fig.add_vline(x=pd.Timestamp(project_end), line_dash="dash", line_color="blue",
-                  annotation_text="Project End", annotation_position="top")
+    # Add project boundaries as shapes instead of vlines to avoid the error
+    fig.add_shape(
+        type="line",
+        x0=project_start, x1=project_start,
+        y0=0, y1=1,
+        xref="x", yref="paper",
+        line=dict(color="blue", width=2, dash="dash")
+    )
+    
+    fig.add_shape(
+        type="line",
+        x0=project_end, x1=project_end,
+        y0=0, y1=1,
+        xref="x", yref="paper",
+        line=dict(color="blue", width=2, dash="dash")
+    )
     
     # Add today's date line
-    fig.add_vline(x=pd.Timestamp(datetime.now()), line_dash="solid", line_color="red",
-                  annotation_text="Today", annotation_position="bottom")
+    fig.add_shape(
+        type="line",
+        x0=datetime.now(), x1=datetime.now(),
+        y0=0, y1=1,
+        xref="x", yref="paper",
+        line=dict(color="red", width=2)
+    )
+    
+    # Add annotations for the lines
+    fig.add_annotation(
+        x=project_start, y=1.02,
+        text="Project Start",
+        showarrow=False,
+        xref="x", yref="paper",
+        font=dict(size=10, color="blue")
+    )
+    
+    fig.add_annotation(
+        x=project_end, y=1.02,
+        text="Project End",
+        showarrow=False,
+        xref="x", yref="paper",
+        font=dict(size=10, color="blue")
+    )
+    
+    fig.add_annotation(
+        x=datetime.now(), y=-0.02,
+        text="Today",
+        showarrow=False,
+        xref="x", yref="paper",
+        font=dict(size=10, color="red")
+    )
+    
+    # Calculate date range for x-axis
+    date_buffer = timedelta(days=7)
+    x_min = project_start - date_buffer
+    x_max = project_end + date_buffer
     
     # Update layout
     fig.update_layout(
@@ -96,8 +147,7 @@ def create_gantt_chart(problem_file):
         xaxis=dict(
             title="Timeline",
             type='date',
-            range=[pd.Timestamp(project_start) - pd.Timedelta(days=7), 
-                   pd.Timestamp(project_end) + pd.Timedelta(days=7)],
+            range=[x_min, x_max],
             showgrid=True,
             gridcolor='rgba(0,0,0,0.1)'
         ),
@@ -137,8 +187,8 @@ def show_gantt_chart_tab(problem_file):
     st.subheader("📈 Project Timeline")
     
     # Ensure project has end date
-    if 'project_end_date' not in problem_file:
-        problem_file['project_end_date'] = problem_file.get('project_start_date', datetime.now()) + pd.Timedelta(days=30)
+    if 'project_end_date' not in problem_file or problem_file['project_end_date'] is None:
+        problem_file['project_end_date'] = problem_file.get('project_start_date', datetime.now()) + timedelta(days=30)
     
     gantt_fig = create_gantt_chart(problem_file)
     if gantt_fig:
@@ -152,8 +202,8 @@ def show_gantt_chart_tab(problem_file):
         overdue_count = 0
         completed_count = 0
         
-        for task in problem_file['tasks'].values():
-            for subtask in task['subtasks'].values():
+        for task in problem_file.get('tasks', {}).values():
+            for subtask in task.get('subtasks', {}).values():
                 all_dates.extend([subtask['start_date'], subtask['projected_end_date']])
                 if subtask['progress'] == 100:
                     completed_count += 1
@@ -181,7 +231,7 @@ def show_file_analytics(problem_file):
     """Display file analytics tab"""
     st.subheader("📊 Project Analytics")
     
-    if not problem_file['tasks']:
+    if not problem_file.get('tasks'):
         st.info("No tasks available for analytics.")
         return
     
@@ -190,8 +240,8 @@ def show_file_analytics(problem_file):
     progress_data = []
     status_data = {'Completed': 0, 'In Progress': 0, 'Not Started': 0, 'Overdue': 0}
     
-    for task in problem_file['tasks'].values():
-        for subtask in task['subtasks'].values():
+    for task in problem_file.get('tasks', {}).values():
+        for subtask in task.get('subtasks', {}).values():
             # User workload
             user = subtask['assigned_to']
             if user not in user_workload:
