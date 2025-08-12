@@ -18,6 +18,31 @@ def show_sidebar():
             st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
+                # Email test section (REMOVE IN PRODUCTION)
+        with st.expander("🧪 Test Email System"):
+            if st.button("Send Test Email"):
+                try:
+                    from sendgrid import SendGridAPIClient
+                    from sendgrid.helpers.mail import Mail
+            
+                    # Get your email from secrets
+                    test_email = st.secrets["user_emails"].get("Admin", "anatoliy.savchenko@windsorgp.com")
+            
+                    sg = SendGridAPIClient(st.secrets["sendgrid"]["api_key"])
+                    message = Mail(
+                        from_email=st.secrets["sendgrid"]["from_email"],
+                        to_emails=test_email,
+                        subject="Test Email from Problem Tracker",
+                        html_content="<h1>Test Email</h1><p>If you see this, SendGrid is working!</p>"
+                    )
+            
+                    response = sg.send(message)
+                    st.success(f"✅ Test email sent to {test_email}! Status: {response.status_code}")
+            
+                except Exception as e:
+                    st.error(f"❌ Failed to send test email: {str(e)}")
+                    st.write("Error details:", e)
+
         # CSS for home button
         st.markdown("""
             <style>
