@@ -12,8 +12,8 @@ def show_comments_section(entity_type: str, entity_id: str, entity_name: str, fi
     st.markdown(f"### 💬 Comments for {entity_name}")
     
     # Check if current user is a partner commenting on someone else's file
-    is_partner_on_other_file = (
-        st.session_state.user_role == 'Partner' and 
+    # New logic (Anyone except owner):
+    is_commenting_on_other_file = (
         file_owner and 
         file_owner != st.session_state.current_user
     )
@@ -30,7 +30,7 @@ def show_comments_section(entity_type: str, entity_id: str, entity_name: str, fi
             comment_text = st.text_area("Your comment:", key=f"comment_text_{entity_type}_{entity_id}")
             
             # Show notification info if partner commenting on other's file
-            if is_partner_on_other_file:
+            if is_commenting_on_other_file:
                 st.info(f"📧 Your comment will notify {file_owner} via email")
             
             if st.form_submit_button("Post Comment"):
@@ -50,7 +50,7 @@ def show_comments_section(entity_type: str, entity_id: str, entity_name: str, fi
                         st.session_state.data['comments'][comment_id] = comment_data
                         
                         # Send email if partner commenting on other's file
-                        if is_partner_on_other_file and file_name:
+                        if is_commenting_on_other_file and file_name:
                             send_partner_comment_notification(
                                 file_owner=file_owner,
                                 partner_name=st.session_state.current_user,

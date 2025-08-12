@@ -67,7 +67,7 @@ def send_partner_comment_notification(file_owner, partner_name, file_name, task_
         logger.info(f"No email configured for user {file_owner}")
         return
     
-    subject = f"New Partner Comment on '{file_name}'"
+    subject = f"New Comment on '{file_name}'"
     
     html_content = f"""
     <html>
@@ -77,7 +77,7 @@ def send_partner_comment_notification(file_owner, partner_name, file_name, task_
                 
                 <p>Hi {file_owner},</p>
                 
-                <p><strong>{partner_name}</strong> (Partner) has commented on your problem file:</p>
+                <p><strong>{partner_name}</strong> has commented on your problem file:</p>
                 
                 <div style="background: #f5f5f5; padding: 15px; border-left: 4px solid #2f74c0; margin: 20px 0;">
                     <p><strong>Problem File:</strong> {file_name}</p>
