@@ -51,6 +51,18 @@ def show_comments_section(entity_type: str, entity_id: str, entity_name: str, fi
             
             if st.form_submit_button("Post Comment"):
                 if comment_text:
+
+                    st.write(f"DEBUG: file_owner = '{file_owner}' (type: {type(file_owner)})")
+                    st.write(f"DEBUG: file_owner length = {len(file_owner) if file_owner else 0}")
+                    st.write(f"DEBUG: file_owner repr = {repr(file_owner)}")
+        
+                    test_email = get_user_email(file_owner)
+                    st.write(f"DEBUG: Email lookup result = {test_email}")
+        
+                    # Also test with 'Admin' directly
+                    test_admin_email = get_user_email('Admin')
+                    st.write(f"DEBUG: Direct 'Admin' lookup = {test_admin_email}")
+
                     comment_id = str(uuid.uuid4())
                     comment_data = {
                         'entity_type': entity_type,

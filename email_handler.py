@@ -24,23 +24,46 @@ def get_sendgrid_client():
         return None
 
 def get_user_email(username):
-    """Get user email from secrets"""
+    """Get user email from secrets - case insensitive"""
     try:
         user_emails = st.secrets.get("user_emails", {})
-        return user_emails.get(username)
-    except Exception:
+        
+        # Debug output
+        print(f"[EMAIL DEBUG] Looking for email for username: '{username}'")
+        print(f"[EMAIL DEBUG] Available users in secrets: {list(user_emails.keys())}")
+        
+        # Try exact match first
+        if username in user_emails:
+            print(f"[EMAIL DEBUG] Found exact match for {username}: {user_emails[username]}")
+            return user_emails[username]
+        
+        # Try case-insensitive match
+        for key, value in user_emails.items():
+            if key.lower() == username.lower():
+                print(f"[EMAIL DEBUG] Found case-insensitive match: {key} -> {value}")
+                return value
+        
+        print(f"[EMAIL DEBUG] No email found for username: '{username}'")
+        print(f"[EMAIL DEBUG] Available keys: {list(user_emails.keys())}")
+        return None
+        
+    except Exception as e:
+        print(f"[EMAIL ERROR] Error getting user email: {e}")
         return None
 
 def send_email_async(to_email, subject, html_content):
     """Send email asynchronously to avoid blocking UI"""
     def send():
         try:
+            print(f"[SENDGRID] Starting email send to: {to_email}")
+            
             sg = get_sendgrid_client()
             if not sg:
-                logger.error("SendGrid client not available")
+                print("[SENDGRID ERROR] SendGrid client not available - check API key")
                 return
             
             from_email = st.secrets.get("sendgrid", {}).get("from_email", "noreply@problemtracker.com")
+            print(f"[SENDGRID] From: {from_email}, To: {to_email}")
             
             message = Mail(
                 from_email=from_email,
@@ -49,13 +72,19 @@ def send_email_async(to_email, subject, html_content):
                 html_content=html_content
             )
             
+            print(f"[SENDGRID] Sending email with subject: {subject}")
             response = sg.send(message)
-            logger.info(f"Email sent successfully to {to_email}. Status: {response.status_code}")
+            print(f"[SENDGRID SUCCESS] Email sent! Status code: {response.status_code}")
+            print(f"[SENDGRID SUCCESS] Response headers: {response.headers}")
             
         except Exception as e:
-            logger.error(f"Failed to send email to {to_email}: {e}")
+            print(f"[SENDGRID ERROR] Failed to send email: {str(e)}")
+            print(f"[SENDGRID ERROR] Exception type: {type(e).__name__}")
+            import traceback
+            print(f"[SENDGRID ERROR] Traceback: {traceback.format_exc()}")
     
-    # Run in separate thread to avoid blocking
+    # Run in separate thread
+    print(f"[SENDGRID] Starting thread for email to {to_email}")
     thread = threading.Thread(target=send)
     thread.daemon = True
     thread.start()
