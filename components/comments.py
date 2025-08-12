@@ -39,7 +39,7 @@ def show_comments_section(entity_type: str, entity_id: str, entity_name: str, fi
                     comment_data = {
                         'entity_type': entity_type,
                         'entity_id': entity_id,
-                        'user': st.session_state.current_user,
+                        'user_name': st.session_state.current_user,
                         'text': comment_text,
                         'created_at': datetime.now(),
                         'parent_id': None,
@@ -134,7 +134,7 @@ def display_comment_thread(comment_id: str, comment: dict, all_comments: dict, e
                             reply_data = {
                                 'entity_type': entity_type,
                                 'entity_id': entity_id,
-                                'user': st.session_state.current_user,
+                                'user_name': st.session_state.current_user,
                                 'text': reply_text,
                                 'created_at': datetime.now(),
                                 'parent_id': comment_id,
