@@ -11,6 +11,14 @@ def show_comments_section(entity_type: str, entity_id: str, entity_name: str, fi
     """Display comments section for tasks and subtasks"""
     st.markdown(f"### 💬 Comments for {entity_name}")
     
+    with st.expander("🔍 Debug Info"):
+        st.write(f"File Owner: {file_owner}")
+        st.write(f"File Name: {file_name}")
+        st.write(f"Current User: {st.session_state.current_user}")
+        st.write(f"User Role: {st.session_state.user_role}")
+        st.write(f"Is different user: {file_owner and file_owner != st.session_state.current_user}")
+
+
     # Debug info - remove this after testing
     st.write(f"DEBUG - File Owner: {file_owner}, Current User: {st.session_state.current_user}, File Name: {file_name}")
 
