@@ -141,7 +141,7 @@ def load_comments():
             comments[comment_id] = {
                 'entity_type': comment.get('entity_type', ''),
                 'entity_id': comment.get('entity_id', ''),
-                'user_name': comment.get('user', ''),
+                'user_name': comment.get('user_name', ''),
                 'text': comment.get('text', ''),
                 'created_at': created_at,
                 'parent_id': comment.get('parent_id'),
