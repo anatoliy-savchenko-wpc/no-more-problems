@@ -24,31 +24,44 @@ def get_sendgrid_client():
         return None
 
 def get_user_email(username):
-    """Get user email from secrets - case insensitive"""
+    """Get user email from secrets - handles case sensitivity and whitespace"""
     try:
+        if not username:
+            print(f"[EMAIL] No username provided")
+            return None
+            
         user_emails = st.secrets.get("user_emails", {})
         
-        # Debug output
-        print(f"[EMAIL DEBUG] Looking for email for username: '{username}'")
-        print(f"[EMAIL DEBUG] Available users in secrets: {list(user_emails.keys())}")
+        # Clean the username (remove whitespace)
+        username_clean = username.strip()
+        
+        print(f"[EMAIL] Looking for email for: '{username}' (cleaned: '{username_clean}')")
+        print(f"[EMAIL] Available users: {list(user_emails.keys())}")
         
         # Try exact match first
-        if username in user_emails:
-            print(f"[EMAIL DEBUG] Found exact match for {username}: {user_emails[username]}")
-            return user_emails[username]
+        if username_clean in user_emails:
+            email = user_emails[username_clean]
+            print(f"[EMAIL] Found exact match: {email}")
+            return email
         
         # Try case-insensitive match
         for key, value in user_emails.items():
-            if key.lower() == username.lower():
-                print(f"[EMAIL DEBUG] Found case-insensitive match: {key} -> {value}")
+            if key.lower() == username_clean.lower():
+                print(f"[EMAIL] Found case-insensitive match: {key} -> {value}")
                 return value
         
-        print(f"[EMAIL DEBUG] No email found for username: '{username}'")
-        print(f"[EMAIL DEBUG] Available keys: {list(user_emails.keys())}")
+        # Try partial match (in case there's extra text)
+        for key, value in user_emails.items():
+            if key.lower() in username_clean.lower() or username_clean.lower() in key.lower():
+                print(f"[EMAIL] Found partial match: {key} -> {value}")
+                return value
+        
+        print(f"[EMAIL] No email found for: '{username}'")
+        print(f"[EMAIL] Available keys: {list(user_emails.keys())}")
         return None
         
     except Exception as e:
-        print(f"[EMAIL ERROR] Error getting user email: {e}")
+        print(f"[EMAIL ERROR] Exception in get_user_email: {e}")
         return None
 
 def send_email_async(to_email, subject, html_content):

@@ -95,19 +95,36 @@ def test_email_lookup(file_owner: str):
     """Test email lookup functionality"""
     st.write("Testing email lookup...")
     
+    # Show raw file_owner value
+    st.code(f"Raw file_owner: '{file_owner}'")
+    st.code(f"Length: {len(file_owner) if file_owner else 0}")
+    st.code(f"Repr: {repr(file_owner)}")
+    
     # Test direct lookup
     if file_owner:
         email = get_user_email(file_owner)
-        st.write(f"Lookup '{file_owner}': {email}")
+        st.code(f"Lookup result: {email}")
+    
+    # Test with cleaned value
+    if file_owner:
+        cleaned = file_owner.strip()
+        email_cleaned = get_user_email(cleaned)
+        st.code(f"Cleaned '{cleaned}': {email_cleaned}")
     
     # Show all configured emails
     try:
         all_emails = st.secrets.get("user_emails", {})
-        st.write("Configured users:")
+        st.write("Configured users in secrets:")
         for user, email in all_emails.items():
-            st.write(f"  • {user}: {email}")
+            st.code(f"{repr(user)}: {email}")
     except Exception as e:
         st.error(f"Error accessing user_emails: {e}")
+    
+    # Test specific lookups
+    st.write("Testing specific lookups:")
+    for test_name in ["Admin", "admin", "ADMIN", " Admin ", " Admin"]:
+        result = get_user_email(test_name)
+        st.code(f"get_user_email('{test_name}'): {result}")
 
 # ============================================================================
 # HELPER FUNCTIONS
