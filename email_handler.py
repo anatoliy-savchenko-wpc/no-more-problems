@@ -62,13 +62,13 @@ def send_email_async(to_email, subject, html_content):
 
 def send_partner_comment_notification(file_owner, partner_name, file_name, task_name, comment_text):
     """Send email notification when partner comments"""
-    logger.info(f"Attempting to send email for file_owner: {file_owner}")
+    print(f"Attempting to send email for file_owner: {file_owner}")
 
     owner_email = get_user_email(file_owner)
-    logger.info(f"Found email for {file_owner}: {owner_email}")
-    
+    print(f"Found email for {file_owner}: {owner_email}")
+
     if not owner_email:
-        logger.info(f"No email configured for user {file_owner}")
+        print(f"No email configured for user {file_owner}")
         return
     
     subject = f"New Comment on '{file_name}'"
