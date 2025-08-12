@@ -11,12 +11,17 @@ def show_comments_section(entity_type: str, entity_id: str, entity_name: str, fi
     """Display comments section for tasks and subtasks"""
     st.markdown(f"### 💬 Comments for {entity_name}")
     
+    # Debug info - remove this after testing
+    st.write(f"DEBUG - File Owner: {file_owner}, Current User: {st.session_state.current_user}, File Name: {file_name}")
+
     # Check if current user is a partner commenting on someone else's file
     # New logic (Anyone except owner):
     is_commenting_on_other_file = (
         file_owner and 
         file_owner != st.session_state.current_user
     )
+
+    st.write(f"DEBUG - Is commenting on other's file: {is_commenting_on_other_file}")
     
     # Get comments for this entity
     entity_comments = {}
