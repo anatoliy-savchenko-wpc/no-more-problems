@@ -4,8 +4,7 @@ Comments system component with email notifications - Fixed Version
 import streamlit as st
 import uuid
 from datetime import datetime
-from supabase import create_client
-from database import save_comment, delete_comment
+from database import save_comment, delete_comment, init_supabase
 from email_handler import send_partner_comment_notification, get_user_email
 
 # ============================================================================
@@ -14,7 +13,8 @@ from email_handler import send_partner_comment_notification, get_user_email
 
 def get_supabase_client():
     """Get Supabase client"""
-    return create_client(st.secrets["supabase"]["url"], st.secrets["supabase"]["anon_key"])
+    from database import init_supabase
+    return init_supabase()
 
 def get_file_owner_from_entity(entity_type: str, entity_id: str):
     """

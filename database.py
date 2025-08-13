@@ -257,7 +257,7 @@ def save_comment(comment_id: str, comment_data: dict):
             'id': comment_id,
             'entity_type': comment_data.get('entity_type', ''),
             'entity_id': comment_data.get('entity_id', ''),
-            'user_name': comment_data.get('user', ''),
+            'user_name': comment_data.get('user_name', ''),
             'text': comment_data.get('text', ''),
             'parent_id': comment_data.get('parent_id'),
             'user_role': comment_data.get('user_role', 'User')
