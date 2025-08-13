@@ -59,7 +59,18 @@ def show_task_management(file_id, problem_file, can_edit):
             
             # Comments section for task
             with st.expander(f"💬 Task Comments ({len([c for c in st.session_state.data.get('comments', {}).values() if c['entity_type'] == 'task' and c['entity_id'] == task_id])})"):
-                show_comments_section('task', task_id, task['name'])
+                # show_comments_section('task', task_id, task['name'])
+
+                try:
+                    from components.comments import show_comments_section
+                    st.write(f"DEBUG: About to call comments for task {task['name']}")
+                    show_comments_section('task', task_id, task['name'])
+                    st.write("DEBUG: Comments loaded successfully")
+                except ImportError as e:
+                    st.error(f"Import error: {e}")
+                except Exception as e:
+                    st.error(f"Comments error: {e}")
+                    st.write(f"Error type: {type(e)}")
             
             # Add subtask form (only if can edit)
             if can_edit:
