@@ -1,18 +1,98 @@
 """
-Comments system component with email notifications
+Comments system component with email notifications - Fixed Version
 """
 import streamlit as st
 import uuid
 from datetime import datetime
+from supabase import create_client
 from database import save_comment, delete_comment
 from email_handler import send_partner_comment_notification, get_user_email
+
+# ============================================================================
+# DATABASE HELPER FUNCTIONS
+# ============================================================================
+
+def get_supabase_client():
+    """Get Supabase client"""
+    return create_client(st.secrets["supabase"]["url"], st.secrets["supabase"]["anon_key"])
+
+def get_file_owner_from_entity(entity_type: str, entity_id: str):
+    """
+    Get file owner and name by looking up through database relationships
+    
+    Args:
+        entity_type: 'task' or 'subtask'
+        entity_id: UUID of the entity
+        
+    Returns:
+        tuple: (file_owner, file_name) or (None, None)
+    """
+    try:
+        supabase = get_supabase_client()
+        
+        if entity_type == 'task':
+            # Get task and its problem file
+            response = supabase.table('tasks').select(
+                'problem_files(owner, problem_name)'
+            ).eq('id', entity_id).execute()
+            
+            if response.data and len(response.data) > 0:
+                problem_file = response.data[0].get('problem_files')
+                if problem_file:
+                    return problem_file['owner'], problem_file['problem_name']
+        
+        elif entity_type == 'subtask':
+            # Get subtask -> task -> problem file
+            response = supabase.table('subtasks').select(
+                'tasks(problem_files(owner, problem_name))'
+            ).eq('id', entity_id).execute()
+            
+            if response.data and len(response.data) > 0:
+                task = response.data[0].get('tasks')
+                if task:
+                    problem_file = task.get('problem_files')
+                    if problem_file:
+                        return problem_file['owner'], problem_file['problem_name']
+        
+        print(f"[DB] Could not find file owner for {entity_type} {entity_id}")
+        return None, None
+        
+    except Exception as e:
+        print(f"[DB ERROR] Error getting file owner: {e}")
+        return None, None
+
+def get_entity_comments_from_db(entity_type: str, entity_id: str):
+    """
+    Get all comments for a specific entity from database
+    
+    Returns:
+        dict: Comments for the entity {comment_id: comment_data}
+    """
+    try:
+        supabase = get_supabase_client()
+        
+        response = supabase.table('comments').select('*').eq(
+            'entity_type', entity_type
+        ).eq('entity_id', entity_id).order('created_at', desc=False).execute()
+        
+        # Convert to dict format for existing display code
+        entity_comments = {}
+        if response.data:
+            for comment in response.data:
+                entity_comments[comment['id']] = comment
+                
+        print(f"[DB] Found {len(entity_comments)} comments for {entity_type} {entity_id}")
+        return entity_comments
+        
+    except Exception as e:
+        print(f"[DB ERROR] Error getting comments: {e}")
+        return {}
 
 # ============================================================================
 # MAIN COMMENTS SECTION
 # ============================================================================
 
-def show_comments_section(entity_type: str, entity_id: str, entity_name: str, 
-                         file_owner: str = None, file_name: str = None):
+def show_comments_section(entity_type: str, entity_id: str, entity_name: str):
     """
     Display comments section for tasks and subtasks with email notifications
     
@@ -20,19 +100,25 @@ def show_comments_section(entity_type: str, entity_id: str, entity_name: str,
         entity_type: Type of entity ('task' or 'subtask')
         entity_id: Unique ID of the entity
         entity_name: Display name of the entity
-        file_owner: Username of the problem file owner
-        file_name: Name of the problem file
     """
     st.markdown(f"### 💬 Comments for {entity_name}")
     
+    # Get file owner and name from database
+    file_owner, file_name = get_file_owner_from_entity(entity_type, entity_id)
+    
+    if not file_owner:
+        st.error("❌ Could not determine file owner for notifications")
+        return
+    
     # Debug panel for troubleshooting
-    show_debug_panel(file_owner, file_name)
+    if st.secrets.get("debug_mode", False):
+        show_debug_panel(entity_type, entity_id, file_owner, file_name, entity_name)
     
     # Check email notification conditions
     can_notify = check_notification_conditions(file_owner)
     
-    # Get existing comments
-    entity_comments = get_entity_comments(entity_type, entity_id)
+    # Get existing comments from database
+    entity_comments = get_entity_comments_from_db(entity_type, entity_id)
     
     # Show comment form
     show_comment_form(
@@ -63,68 +149,67 @@ def show_comments_section(entity_type: str, entity_id: str, entity_name: str,
 # DEBUG FUNCTIONS
 # ============================================================================
 
-def show_debug_panel(file_owner: str, file_name: str):
-    """Show debug information panel (REMOVE IN PRODUCTION)"""
+def show_debug_panel(entity_type: str, entity_id: str, file_owner: str, file_name: str, entity_name: str):
+    """Show debug information panel"""
     with st.expander("🔍 Debug Information", expanded=False):
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            st.markdown("**File Info:**")
-            st.code(f"Owner: {file_owner}")
-            st.code(f"Name: {file_name}")
-            st.code(f"Type: {type(file_owner)}")
+            st.markdown("**Entity Info:**")
+            st.code(f"Type: {entity_type}")
+            st.code(f"ID: {entity_id}")
+            st.code(f"Name: {entity_name}")
         
         with col2:
+            st.markdown("**File Context:**")
+            st.code(f"Owner: {file_owner}")
+            st.code(f"File: {file_name}")
+            st.code(f"Owner Type: {type(file_owner)}")
+        
+        with col3:
             st.markdown("**Current User:**")
             st.code(f"User: {st.session_state.current_user}")
             st.code(f"Role: {st.session_state.user_role}")
+            
             is_different = file_owner != st.session_state.current_user if file_owner else False
-            st.code(f"Different: {is_different}")
-        
-        with col3:
-            st.markdown("**Email Status:**")
+            st.code(f"Different User: {is_different}")
+            
             owner_email = get_user_email(file_owner) if file_owner else None
-            st.code(f"Email: {owner_email or 'None'}")
-            st.code(f"Can Send: {bool(owner_email and is_different)}")
+            st.code(f"Owner Email: {owner_email or 'None'}")
+            
+            can_send = bool(owner_email and is_different)
+            st.code(f"Can Send Email: {can_send}")
             
             # Test email lookup
-            if st.button("Test Email Lookup"):
+            if st.button("🧪 Test Email Lookup"):
                 test_email_lookup(file_owner)
 
 def test_email_lookup(file_owner: str):
     """Test email lookup functionality"""
-    st.write("Testing email lookup...")
+    st.write("**Email Lookup Test Results:**")
+    
+    if not file_owner:
+        st.error("No file owner to test")
+        return
     
     # Show raw file_owner value
-    st.code(f"Raw file_owner: '{file_owner}'")
-    st.code(f"Length: {len(file_owner) if file_owner else 0}")
+    st.code(f"Testing owner: '{file_owner}'")
+    st.code(f"Length: {len(file_owner)}")
     st.code(f"Repr: {repr(file_owner)}")
     
     # Test direct lookup
-    if file_owner:
-        email = get_user_email(file_owner)
-        st.code(f"Lookup result: {email}")
-    
-    # Test with cleaned value
-    if file_owner:
-        cleaned = file_owner.strip()
-        email_cleaned = get_user_email(cleaned)
-        st.code(f"Cleaned '{cleaned}': {email_cleaned}")
+    email = get_user_email(file_owner)
+    st.code(f"Email result: {email}")
     
     # Show all configured emails
     try:
         all_emails = st.secrets.get("user_emails", {})
-        st.write("Configured users in secrets:")
+        st.write("**Configured users in secrets:**")
         for user, email in all_emails.items():
-            st.code(f"{repr(user)}: {email}")
+            match_status = "✅ MATCH" if user == file_owner else ""
+            st.code(f"{repr(user)}: {email} {match_status}")
     except Exception as e:
         st.error(f"Error accessing user_emails: {e}")
-    
-    # Test specific lookups
-    st.write("Testing specific lookups:")
-    for test_name in ["Admin", "admin", "ADMIN", " Admin ", " Admin"]:
-        result = get_user_email(test_name)
-        st.code(f"get_user_email('{test_name}'): {result}")
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -138,32 +223,21 @@ def check_notification_conditions(file_owner: str) -> bool:
         bool: True if notifications should be sent
     """
     if not file_owner:
+        print(f"[NOTIFICATION] No file owner provided")
         return False
     
     # Check if commenting on someone else's file
     is_other_file = file_owner != st.session_state.current_user
+    if not is_other_file:
+        print(f"[NOTIFICATION] User commenting on own file, no notification needed")
+        return False
     
     # Check if owner has email configured
     owner_email = get_user_email(file_owner)
+    has_email = owner_email is not None
     
-    return is_other_file and owner_email is not None
-
-def get_entity_comments(entity_type: str, entity_id: str) -> dict:
-    """
-    Get all comments for a specific entity
-    
-    Returns:
-        dict: Comments for the entity
-    """
-    entity_comments = {}
-    all_comments = st.session_state.data.get('comments', {})
-    
-    for comment_id, comment in all_comments.items():
-        if (comment.get('entity_type') == entity_type and 
-            comment.get('entity_id') == entity_id):
-            entity_comments[comment_id] = comment
-    
-    return entity_comments
+    print(f"[NOTIFICATION] Owner: {file_owner}, Email: {owner_email}, Can notify: {is_other_file and has_email}")
+    return is_other_file and has_email
 
 # ============================================================================
 # COMMENT FORM
@@ -180,6 +254,8 @@ def show_comment_form(entity_type: str, entity_id: str, entity_name: str,
             st.success(f"📧 Your comment will notify **{file_owner}** at {owner_email}")
         elif file_owner and file_owner != st.session_state.current_user:
             st.warning(f"⚠️ {file_owner} has no email configured - no notification will be sent")
+        elif file_owner == st.session_state.current_user:
+            st.info("ℹ️ You're commenting on your own file - no email notification needed")
         
         # Comment form
         with st.form(f"comment_form_{entity_type}_{entity_id}", clear_on_submit=True):
@@ -212,6 +288,11 @@ def handle_comment_submission(comment_text: str, entity_type: str, entity_id: st
                              can_notify: bool, is_reply: bool, parent_id: str = None):
     """Handle comment submission with email notification"""
     
+    print(f"[COMMENT_SUBMIT] Handling comment submission")
+    print(f"[COMMENT_SUBMIT] Entity: {entity_type}/{entity_id}")
+    print(f"[COMMENT_SUBMIT] File Owner: {file_owner}")
+    print(f"[COMMENT_SUBMIT] Can Notify: {can_notify}")
+    
     # Create comment data
     comment_id = str(uuid.uuid4())
     comment_data = {
@@ -226,14 +307,12 @@ def handle_comment_submission(comment_text: str, entity_type: str, entity_id: st
     
     # Save comment to database
     if save_comment(comment_id, comment_data):
-        # Add to session state
-        if 'comments' not in st.session_state.data:
-            st.session_state.data['comments'] = {}
-        st.session_state.data['comments'][comment_id] = comment_data
+        print(f"[COMMENT_SUBMIT] Comment saved successfully: {comment_id}")
         
         # Send email notification if conditions are met
         email_sent = False
         if can_notify and file_owner and file_name:
+            print(f"[COMMENT_SUBMIT] Attempting to send email notification")
             email_sent = send_email_notification(
                 file_owner=file_owner,
                 commenter=st.session_state.current_user,
@@ -242,6 +321,8 @@ def handle_comment_submission(comment_text: str, entity_type: str, entity_id: st
                 comment_text=comment_text,
                 is_reply=is_reply
             )
+        else:
+            print(f"[COMMENT_SUBMIT] Email notification skipped - conditions not met")
         
         # Show success message
         if email_sent:
@@ -257,6 +338,7 @@ def handle_comment_submission(comment_text: str, entity_type: str, entity_id: st
         st.rerun()
     else:
         st.error("❌ Failed to save comment. Please try again.")
+        print(f"[COMMENT_SUBMIT] Failed to save comment")
 
 def send_email_notification(file_owner: str, commenter: str, file_name: str,
                            entity_name: str, comment_text: str, is_reply: bool) -> bool:
@@ -267,11 +349,16 @@ def send_email_notification(file_owner: str, commenter: str, file_name: str,
         bool: True if email was sent successfully
     """
     try:
+        print(f"[EMAIL_NOTIFY] Preparing notification for {file_owner}")
+        
         # Get owner's email
         owner_email = get_user_email(file_owner)
         if not owner_email:
-            st.warning(f"No email found for {file_owner}")
+            print(f"[EMAIL_NOTIFY] No email found for {file_owner}")
+            st.warning(f"No email configured for {file_owner}")
             return False
+        
+        print(f"[EMAIL_NOTIFY] Found email for {file_owner}: {owner_email}")
         
         # Prepare task name for email
         if is_reply:
@@ -280,6 +367,7 @@ def send_email_notification(file_owner: str, commenter: str, file_name: str,
             task_name = entity_name
         
         # Send notification
+        print(f"[EMAIL_NOTIFY] Calling send_partner_comment_notification")
         send_partner_comment_notification(
             file_owner=file_owner,
             partner_name=commenter,
@@ -288,9 +376,11 @@ def send_email_notification(file_owner: str, commenter: str, file_name: str,
             comment_text=comment_text
         )
         
+        print(f"[EMAIL_NOTIFY] Email notification sent successfully")
         return True
         
     except Exception as e:
+        print(f"[EMAIL_NOTIFY ERROR] {str(e)}")
         st.error(f"Email error: {str(e)}")
         return False
 
@@ -311,7 +401,7 @@ def display_comments_list(entity_comments: dict, entity_type: str, entity_id: st
     # Sort by newest first
     sorted_comments = sorted(
         root_comments.items(),
-        key=lambda x: x[1].get('created_at', datetime.now()),
+        key=lambda x: parse_timestamp(x[1].get('created_at')),
         reverse=True
     )
     
@@ -447,6 +537,27 @@ def get_role_badge(role: str) -> str:
     }
     return badges.get(role, '👤')
 
+def parse_timestamp(timestamp):
+    """Parse timestamp for sorting - handles both string and datetime objects"""
+    if not timestamp:
+        return datetime.min
+    
+    if isinstance(timestamp, str):
+        try:
+            # Handle ISO format with timezone
+            return datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+        except:
+            try:
+                # Try parsing without timezone
+                return datetime.fromisoformat(timestamp)
+            except:
+                return datetime.min
+    
+    if isinstance(timestamp, datetime):
+        return timestamp
+    
+    return datetime.min
+
 def format_timestamp(timestamp) -> str:
     """Format timestamp for display"""
     if not timestamp:
@@ -474,8 +585,6 @@ def can_delete_comment(comment: dict) -> bool:
 def delete_comment_handler(comment_id: str):
     """Handle comment deletion"""
     if delete_comment(comment_id):
-        if comment_id in st.session_state.data.get('comments', {}):
-            del st.session_state.data['comments'][comment_id]
         st.success("Comment deleted!")
         st.rerun()
     else:
@@ -490,5 +599,5 @@ def get_replies(parent_id: str, all_comments: dict) -> list:
     
     return sorted(
         replies,
-        key=lambda x: x[1].get('created_at', datetime.now())
+        key=lambda x: parse_timestamp(x[1].get('created_at'))
     )
