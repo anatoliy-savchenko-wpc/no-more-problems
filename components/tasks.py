@@ -1,5 +1,5 @@
 """
-Task management component
+Task management component - Clean Version
 """
 import streamlit as st
 import pandas as pd
@@ -58,19 +58,8 @@ def show_task_management(file_id, problem_file, can_edit):
                             st.rerun()
             
             # Comments section for task
-            with st.expander(f"💬 Task Comments ({len([c for c in st.session_state.data.get('comments', {}).values() if c['entity_type'] == 'task' and c['entity_id'] == task_id])})"):
-                # show_comments_section('task', task_id, task['name'])
-
-                try:
-                    from components.comments import show_comments_section
-                    st.write(f"DEBUG: About to call comments for task {task['name']}")
-                    show_comments_section('task', task_id, task['name'])
-                    st.write("DEBUG: Comments loaded successfully")
-                except ImportError as e:
-                    st.error(f"Import error: {e}")
-                except Exception as e:
-                    st.error(f"Comments error: {e}")
-                    st.write(f"Error type: {type(e)}")
+            with st.expander(f"💬 Task Comments"):
+                show_comments_section('task', task_id, task['name'])
             
             # Add subtask form (only if can edit)
             if can_edit:
@@ -130,10 +119,6 @@ def show_subtasks_table(task_id, task, problem_file, can_edit):
         is_overdue = (subtask['projected_end_date'].date() < datetime.now().date() and 
                     subtask['progress'] < 100)
         
-        # Count comments for this subtask
-        comments_count = len([c for c in st.session_state.data.get('comments', {}).values() 
-                            if c['entity_type'] == 'subtask' and c['entity_id'] == subtask_id])
-        
         subtask_data.append({
             'ID': subtask_id,
             'Name': subtask['name'],
@@ -142,7 +127,6 @@ def show_subtasks_table(task_id, task, problem_file, can_edit):
             'Start Date': subtask['start_date'].strftime('%Y-%m-%d'),
             'End Date': subtask['projected_end_date'].strftime('%Y-%m-%d'),
             'Status': '🔴 Overdue' if is_overdue else '🟢 On Track',
-            'Comments': comments_count,
             'Notes': subtask['notes'][:50] + '...' if len(subtask['notes']) > 50 else subtask['notes']
         })
     
