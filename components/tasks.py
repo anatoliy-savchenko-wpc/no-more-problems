@@ -59,13 +59,7 @@ def show_task_management(file_id, problem_file, can_edit):
             
             # Comments section for task
             with st.expander(f"💬 Task Comments ({len([c for c in st.session_state.data.get('comments', {}).values() if c['entity_type'] == 'task' and c['entity_id'] == task_id])})"):
-                show_comments_section(
-                    'task', 
-                    task_id, 
-                    task['name'],
-                    file_owner=problem_file['owner'],
-                    file_name=problem_file['problem_name']
-                )
+                show_comments_section('task', task_id, task['name'])
             
             # Add subtask form (only if can edit)
             if can_edit:
@@ -162,13 +156,7 @@ def show_subtasks_table(task_id, task, problem_file, can_edit):
             show_edit_subtask_form(task_id, subtask_to_manage, task, problem_file, can_edit)
         
         with subtask_tabs[1]:
-            show_comments_section(
-                'subtask', 
-                subtask_to_manage, 
-                subtask['name'],
-                file_owner=problem_file['owner'],
-                file_name=problem_file['problem_name']
-            )
+            show_comments_section('subtask', subtask_to_manage, subtask['name'])
 
 def show_edit_subtask_form(task_id, subtask_id, task, problem_file, can_edit_param):
     """Display edit subtask form"""
