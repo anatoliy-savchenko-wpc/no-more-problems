@@ -555,32 +555,26 @@ def generate_pdf_report(problem_file):
         # Team Workload Section
         story.append(Paragraph("👥 Team Workload Analysis", heading_style))
         
-        workload_data = [['Team Member', 'Total Subtasks', 'Completed', 'Completion Rate', 'Progress Bar']]
+        workload_data = [['Team Member', 'Total Subtasks', 'Completed', 'Completion Rate']]
         
         for user, workload in export_data['team_workload'].items():
             completion_rate = (workload['completed'] / workload['total'] * 100) if workload['total'] > 0 else 0
-            
-            # Create accurate progress bar representation
-            progress_chars = int(completion_rate / 10)  # Each char represents 10%
-            remaining_chars = 10 - progress_chars
-            progress_bar = '█' * progress_chars + '░' * remaining_chars
             
             workload_data.append([
                 user,
                 str(workload['total']),
                 str(workload['completed']),
-                f"{completion_rate:.1f}%",
-                progress_bar
+                f"{completion_rate:.1f}%"
             ])
         
-        workload_table = Table(workload_data, colWidths=[2*inch, 1*inch, 1*inch, 1*inch, 1.5*inch])
+        workload_table = Table(workload_data, colWidths=[2.5*inch, 1.5*inch, 1.5*inch, 1.5*inch])
         workload_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
             ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
             ('GRID', (0, 0), (-1, -1), 1, colors.black),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ]))
@@ -591,7 +585,7 @@ def generate_pdf_report(problem_file):
         # Comments Activity
         story.append(Paragraph("💬 Comments Activity Analysis", heading_style))
         
-        comments_data = [['User', 'Total', 'Resolved', 'Resolution Rate', 'Mentions Given', 'Mentions Received', 'Admin', 'Partner', 'User Role']]
+        comments_data = [['User', 'Total', 'Resolved', 'Res. Rate', 'Mentions Given', 'Mentions Recv.', 'Admin', 'Partner', 'User']]
         
         for user, activity in export_data['comments_activity'].items():
             resolution_rate = (activity['resolved'] / activity['total'] * 100) if activity['total'] > 0 else 0
@@ -599,7 +593,7 @@ def generate_pdf_report(problem_file):
                 user,
                 str(activity['total']),
                 str(activity['resolved']),
-                f"{resolution_rate:.1f}%",
+                f"{resolution_rate:.0f}%",
                 str(activity['mentions_given']),
                 str(activity['mentions_received']),
                 str(activity['as_admin']),
@@ -607,14 +601,14 @@ def generate_pdf_report(problem_file):
                 str(activity['as_user'])
             ])
         
-        comments_table = Table(comments_data, colWidths=[1.2*inch, 0.6*inch, 0.6*inch, 0.8*inch, 0.7*inch, 0.7*inch, 0.5*inch, 0.6*inch, 0.5*inch])
+        comments_table = Table(comments_data, colWidths=[1.3*inch, 0.7*inch, 0.8*inch, 0.8*inch, 1*inch, 1*inch, 0.7*inch, 0.8*inch, 0.7*inch])
         comments_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
             ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
             ('GRID', (0, 0), (-1, -1), 1, colors.black),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ]))
