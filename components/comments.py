@@ -404,15 +404,19 @@ def handle_comment_submission_with_mentions(comment_text: str, entity_type: str,
     
     # Create comment data
     comment_id = str(uuid.uuid4())
+    current_time = datetime.now()
+    
     comment_data = {
         'entity_type': entity_type,
         'entity_id': entity_id,
         'user_name': st.session_state.current_user,
         'text': comment_text,
-        'created_at': datetime.now(),
+        'created_at': current_time.isoformat(),  # Convert to ISO string for database
         'parent_id': parent_id,
         'user_role': st.session_state.user_role
     }
+    
+    print(f"[COMMENT_SUBMIT] Created timestamp: {current_time.isoformat()}")
     
     # Save comment to database
     if save_comment(comment_id, comment_data):
