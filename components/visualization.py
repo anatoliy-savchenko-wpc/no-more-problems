@@ -560,9 +560,10 @@ def generate_pdf_report(problem_file):
         for user, workload in export_data['team_workload'].items():
             completion_rate = (workload['completed'] / workload['total'] * 100) if workload['total'] > 0 else 0
             
-            # Create simple progress bar representation
-            progress_chars = int(completion_rate / 10)  # 10 chars max
-            progress_bar = '█' * progress_chars + '░' * (10 - progress_chars)
+            # Create accurate progress bar representation
+            progress_chars = int(completion_rate / 10)  # Each char represents 10%
+            remaining_chars = 10 - progress_chars
+            progress_bar = '█' * progress_chars + '░' * remaining_chars
             
             workload_data.append([
                 user,
