@@ -628,28 +628,29 @@ def show_reply_form_with_mentions(parent_id: str, entity_type: str, entity_id: s
     if reply_key not in st.session_state:
         st.session_state[reply_key] = ""
     
+    # Mention selector for replies (OUTSIDE the form)
+    available_users = get_available_users()
+    other_users = [user for user in available_users if user != st.session_state.current_user]
+    
+    if other_users:
+        st.markdown("**👥 Mention in Reply:**")
+        mention_cols = st.columns(min(len(other_users), 4))  # Limit to 4 columns for space
+        
+        for i, user in enumerate(other_users[:4]):  # Show max 4 users
+            with mention_cols[i]:
+                if st.button(f"@{user}", key=f"reply_mention_{user}_{parent_id}", 
+                            help=f"Add @{user} to your reply"):
+                    # Add mention to reply text
+                    current_text = st.session_state[reply_key]
+                    if current_text and not current_text.endswith(' '):
+                        current_text += " "
+                    st.session_state[reply_key] = current_text + f"@{user} "
+                    st.rerun()
+    
+    # Reply form (mention buttons are now OUTSIDE the form)
     with st.form(f"reply_form_{parent_id}", clear_on_submit=True):
         if can_notify:
             st.info(f"📧 Your reply will notify {file_owner}")
-        
-        # Mention selector for replies
-        available_users = get_available_users()
-        other_users = [user for user in available_users if user != st.session_state.current_user]
-        
-        if other_users:
-            st.markdown("**👥 Mention in Reply:**")
-            mention_cols = st.columns(min(len(other_users), 4))  # Limit to 4 columns for space
-            
-            for i, user in enumerate(other_users[:4]):  # Show max 4 users
-                with mention_cols[i]:
-                    if st.button(f"@{user}", key=f"reply_mention_{user}_{parent_id}", 
-                                help=f"Add @{user} to your reply"):
-                        # Add mention to reply text
-                        current_text = st.session_state[reply_key]
-                        if current_text and not current_text.endswith(' '):
-                            current_text += " "
-                        st.session_state[reply_key] = current_text + f"@{user} "
-                        st.rerun()
         
         reply_text = st.text_area(
             "Write your reply:", 
