@@ -1,165 +1,11 @@
 """
-Enhanced Comments system with @mentions functionality
+Comments system with resolution functionality
 """
 import streamlit as st
 import uuid
-import re
 from datetime import datetime
 from database import save_comment, delete_comment, init_supabase
 from email_handler import send_partner_comment_notification, get_user_email
-
-# ============================================================================
-# MENTIONS PROCESSING FUNCTIONS
-# ============================================================================
-
-def extract_mentions(text: str) -> list:
-    """
-    Extract @mentions from comment text
-    
-    Returns:
-        list: List of mentioned usernames (without @)
-    """
-    # Find all @mentions (word characters only, no spaces)
-    mentions = re.findall(r'@(\w+)', text)
-    return list(set(mentions))  # Remove duplicates
-
-def get_available_users() -> list:
-    """Get list of users available for mentioning"""
-    try:
-        # First try to get from session state
-        users = st.session_state.data.get('users', [])
-        if users:
-            print(f"[MENTIONS] Found users in session state: {users}")
-            return users
-        
-        # Fallback: try to get from secrets or hardcoded list
-        fallback_users = ['Admin', 'Partner', 'Haris', 'Stan']
-        print(f"[MENTIONS] Using fallback users: {fallback_users}")
-        return fallback_users
-        
-    except Exception as e:
-        print(f"[MENTIONS ERROR] Error getting users: {e}")
-        # Last resort fallback
-        return ['Admin', 'Partner', 'User']
-
-def validate_mentions(mentions: list) -> list:
-    """
-    Validate that mentioned users exist in the system
-    
-    Returns:
-        list: Valid usernames that exist in the system
-    """
-    available_users = get_available_users()
-    valid_mentions = []
-    
-    for mention in mentions:
-        # Case-insensitive search for users
-        for user in available_users:
-            if user.lower() == mention.lower():
-                valid_mentions.append(user)  # Use correct casing
-                break
-    
-    return valid_mentions
-
-def format_comment_with_mentions(text: str) -> str:
-    """
-    Format comment text to highlight @mentions
-    
-    Returns:
-        str: HTML formatted text with highlighted mentions
-    """
-    available_users = get_available_users()
-    
-    def replace_mention(match):
-        username = match.group(1)
-        # Check if this is a valid user (case-insensitive)
-        for user in available_users:
-            if user.lower() == username.lower():
-                return f'<span style="background-color: #e3f2fd; color: #1976d2; padding: 2px 4px; border-radius: 3px; font-weight: bold;">@{user}</span>'
-        # If not a valid user, return as-is
-        return match.group(0)
-    
-    # Replace @mentions with formatted spans
-    formatted_text = re.sub(r'@(\w+)', replace_mention, text)
-    return formatted_text
-
-def send_mention_notifications(mentions: list, commenter: str, file_name: str, 
-                             entity_name: str, comment_text: str, is_reply: bool = False):
-    """
-    Send email notifications to mentioned users
-    
-    Args:
-        mentions: List of mentioned usernames
-        commenter: Person who made the comment
-        file_name: Name of the problem file
-        entity_name: Name of the task/subtask
-        comment_text: The comment text
-        is_reply: Whether this is a reply or new comment
-    """
-    for mentioned_user in mentions:
-        # Don't notify if user mentions themselves
-        if mentioned_user == commenter:
-            continue
-            
-        try:
-            user_email = get_user_email(mentioned_user)
-            if not user_email:
-                print(f"[MENTION] No email found for mentioned user: {mentioned_user}")
-                continue
-            
-            # Send mention notification
-            send_mention_email_notification(
-                mentioned_user=mentioned_user,
-                commenter=commenter,
-                file_name=file_name,
-                entity_name=entity_name,
-                comment_text=comment_text,
-                is_reply=is_reply
-            )
-            print(f"[MENTION] Sent mention notification to {mentioned_user}")
-            
-        except Exception as e:
-            print(f"[MENTION ERROR] Failed to notify {mentioned_user}: {e}")
-
-def send_mention_email_notification(mentioned_user: str, commenter: str, file_name: str,
-                                  entity_name: str, comment_text: str, is_reply: bool):
-    """Send email notification for @mention"""
-    from email_handler import send_email_async
-    
-    subject = f"You were mentioned in '{file_name}'"
-    
-    # Create a clean version of the comment for email (remove HTML formatting)
-    clean_comment = re.sub(r'<[^>]+>', '', comment_text)
-    
-    html_content = f"""
-    <html>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-            <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                <h2 style="color: #ff6b35;">👋 You were mentioned!</h2>
-                
-                <p>Hi {mentioned_user},</p>
-                
-                <p><strong>{commenter}</strong> mentioned you in a comment:</p>
-                
-                <div style="background: #fff3e0; padding: 15px; border-left: 4px solid #ff6b35; margin: 20px 0;">
-                    <p><strong>Problem File:</strong> {file_name}</p>
-                    <p><strong>Task/Subtask:</strong> {entity_name}</p>
-                    <p><strong>{'Reply' if is_reply else 'Comment'}:</strong></p>
-                    <p style="font-style: italic; background: white; padding: 10px; border-radius: 4px;">"{clean_comment}"</p>
-                </div>
-                
-                <p>Log in to the Problem File Tracker to view the full conversation and respond.</p>
-                
-                <hr style="border: none; border-top: 1px solid #ddd; margin: 30px 0;">
-                <p style="font-size: 12px; color: #666;">
-                    This is an automated mention notification from Problem File Tracker.
-                </p>
-            </div>
-        </body>
-    </html>
-    """
-    
-    send_email_async(mentioned_user + "@example.com", subject, html_content)
 
 # ============================================================================
 # DATABASE HELPER FUNCTIONS
@@ -225,12 +71,56 @@ def get_entity_comments_from_db(entity_type: str, entity_id: str):
         print(f"[DB ERROR] Error getting comments: {e}")
         return {}
 
+def resolve_comment(comment_id: str) -> bool:
+    """Mark a comment as resolved"""
+    try:
+        supabase = get_supabase_client()
+        
+        update_data = {
+            'resolved': True,
+            'resolved_by': st.session_state.current_user,
+            'resolved_at': datetime.now().isoformat()
+        }
+        
+        response = supabase.table('comments').update(update_data).eq('id', comment_id).execute()
+        
+        if response.data:
+            print(f"[RESOLVE] Comment {comment_id} resolved by {st.session_state.current_user}")
+            return True
+        return False
+        
+    except Exception as e:
+        print(f"[RESOLVE ERROR] Failed to resolve comment {comment_id}: {e}")
+        return False
+
+def unresolve_comment(comment_id: str) -> bool:
+    """Mark a comment as unresolved"""
+    try:
+        supabase = get_supabase_client()
+        
+        update_data = {
+            'resolved': False,
+            'resolved_by': None,
+            'resolved_at': None
+        }
+        
+        response = supabase.table('comments').update(update_data).eq('id', comment_id).execute()
+        
+        if response.data:
+            print(f"[UNRESOLVE] Comment {comment_id} unresolved by {st.session_state.current_user}")
+            return True
+        return False
+        
+    except Exception as e:
+        print(f"[UNRESOLVE ERROR] Failed to unresolve comment {comment_id}: {e}")
+        return False
+
 # ============================================================================
 # MAIN COMMENTS SECTION
 # ============================================================================
 
 def show_comments_section(entity_type: str, entity_id: str, entity_name: str):
-    """Display comments section with @mentions support"""
+    """Display comments section with resolution functionality"""
     st.markdown(f"### 💬 Comments for {entity_name}")
     
     # Get file owner and name from database
@@ -250,8 +140,22 @@ def show_comments_section(entity_type: str, entity_id: str, entity_name: str):
     # Get existing comments from database
     entity_comments = get_entity_comments_from_db(entity_type, entity_id)
     
-    # Show comment form with mentions support
-    show_comment_form_with_mentions(
+    # Show comment statistics
+    if entity_comments:
+        total_comments = len(entity_comments)
+        resolved_comments = len([c for c in entity_comments.values() if c.get('resolved', False)])
+        unresolved_comments = total_comments - resolved_comments
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Comments", total_comments)
+        with col2:
+            st.metric("Resolved", resolved_comments, delta=None if resolved_comments == 0 else f"{(resolved_comments/total_comments)*100:.0f}%")
+        with col3:
+            st.metric("Unresolved", unresolved_comments, delta=None if unresolved_comments == 0 else f"{(unresolved_comments/total_comments)*100:.0f}%")
+    
+    # Show comment form
+    show_comment_form(
         entity_type=entity_type,
         entity_id=entity_id,
         entity_name=entity_name,
@@ -263,217 +167,48 @@ def show_comments_section(entity_type: str, entity_id: str, entity_name: str):
     # Display existing comments
     if entity_comments:
         st.markdown("---")
-        st.markdown("#### Existing Comments")
-        display_comments_list(
-            entity_comments=entity_comments,
-            entity_type=entity_type,
-            entity_id=entity_id,
-            file_owner=file_owner,
-            file_name=file_name,
-            entity_name=entity_name
-        )
+        
+        # Filter options
+        filter_col1, filter_col2 = st.columns(2)
+        with filter_col1:
+            show_resolved = st.selectbox(
+                "Filter comments:",
+                ["All Comments", "Unresolved Only", "Resolved Only"],
+                key=f"filter_{entity_type}_{entity_id}"
+            )
+        
+        with filter_col2:
+            sort_order = st.selectbox(
+                "Sort by:",
+                ["Newest First", "Oldest First"],
+                key=f"sort_{entity_type}_{entity_id}"
+            )
+        
+        # Filter comments based on selection
+        filtered_comments = entity_comments
+        if show_resolved == "Unresolved Only":
+            filtered_comments = {k: v for k, v in entity_comments.items() if not v.get('resolved', False)}
+        elif show_resolved == "Resolved Only":
+            filtered_comments = {k: v for k, v in entity_comments.items() if v.get('resolved', False)}
+        
+        if filtered_comments:
+            st.markdown("#### Comments")
+            display_comments_list(
+                entity_comments=filtered_comments,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                file_owner=file_owner,
+                file_name=file_name,
+                entity_name=entity_name,
+                sort_newest_first=(sort_order == "Newest First")
+            )
+        else:
+            st.info(f"💭 No {show_resolved.lower()} found.")
     else:
         st.info("💭 No comments yet. Be the first to comment!")
 
 # ============================================================================
-# ENHANCED COMMENT FORM WITH MENTIONS
-# ============================================================================
-
-def show_comment_form_with_mentions(entity_type: str, entity_id: str, entity_name: str,
-                                   file_owner: str, file_name: str, can_notify: bool):
-    """Display comment form with @mentions support and user selection"""
-    
-    with st.expander("➕ Add New Comment", expanded=False):
-        # Show notification status
-        if can_notify:
-            owner_email = get_user_email(file_owner)
-            st.success(f"📧 Your comment will notify **{file_owner}** at {owner_email}")
-        elif file_owner and file_owner != st.session_state.current_user:
-            st.warning(f"⚠️ {file_owner} has no email configured - no notification will be sent")
-        elif file_owner == st.session_state.current_user:
-            st.info("ℹ️ You're commenting on your own file - no email notification needed")
-        
-        # Initialize comment text in session state if not exists
-        comment_key = f"comment_draft_{entity_type}_{entity_id}"
-        if comment_key not in st.session_state:
-            st.session_state[comment_key] = ""
-        
-        # Mention selector section
-        available_users = get_available_users()
-        other_users = [user for user in available_users if user != st.session_state.current_user]
-        
-        print(f"[DEBUG] Available users: {available_users}")
-        print(f"[DEBUG] Current user: {st.session_state.current_user}")
-        print(f"[DEBUG] Other users: {other_users}")
-        
-        if other_users:
-            st.markdown("**👥 Mention Someone:**")
-            mention_cols = st.columns(len(other_users) + 1)
-            
-            for i, user in enumerate(other_users):
-                with mention_cols[i]:
-                    if st.button(f"@{user}", key=f"mention_btn_{user}_{entity_type}_{entity_id}", 
-                                help=f"Add @{user} to your comment"):
-                        # Add mention to comment text
-                        current_text = st.session_state[comment_key]
-                        if current_text and not current_text.endswith(' '):
-                            current_text += " "
-                        st.session_state[comment_key] = current_text + f"@{user} "
-                        st.rerun()
-            
-            # Clear mentions button
-            with mention_cols[-1]:
-                if st.button("🗑️ Clear", key=f"clear_mentions_{entity_type}_{entity_id}",
-                           help="Clear all mentions from comment"):
-                    # Remove all @mentions from the text
-                    current_text = st.session_state[comment_key]
-                    cleaned_text = re.sub(r'@\w+\s*', '', current_text).strip()
-                    st.session_state[comment_key] = cleaned_text
-                    st.rerun()
-        else:
-            st.info(f"Debug: No other users found. Available: {available_users}, Current: {st.session_state.current_user}")
-        
-        # Comment form)
-        
-        # Comment form
-        with st.form(f"comment_form_{entity_type}_{entity_id}", clear_on_submit=True):
-            comment_text = st.text_area(
-                "Write your comment:",
-                value=st.session_state[comment_key],
-                placeholder="Share your thoughts... Click the buttons above to mention someone!",
-                key=f"comment_input_{entity_type}_{entity_id}",
-                help="Use the mention buttons above or type @username manually",
-                height=100
-            )
-            
-            # Update session state with current text
-            if comment_text != st.session_state[comment_key]:
-                st.session_state[comment_key] = comment_text
-            
-            # Preview mentions if any
-            if comment_text:
-                mentions = extract_mentions(comment_text)
-                if mentions:
-                    valid_mentions = validate_mentions(mentions)
-                    invalid_mentions = [m for m in mentions if m not in [v.lower() for v in valid_mentions]]
-                    
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if valid_mentions:
-                            st.success(f"✅ Will notify: {', '.join(valid_mentions)}")
-                    with col2:
-                        if invalid_mentions:
-                            st.warning(f"⚠️ Unknown users: {', '.join(invalid_mentions)}")
-            
-            submitted = st.form_submit_button("💬 Post Comment", use_container_width=True)
-            
-            if submitted:
-                if comment_text and comment_text.strip():
-                    # Clear the draft after successful submission
-                    st.session_state[comment_key] = ""
-                    
-                    handle_comment_submission_with_mentions(
-                        comment_text=comment_text.strip(),
-                        entity_type=entity_type,
-                        entity_id=entity_id,
-                        entity_name=entity_name,
-                        file_owner=file_owner,
-                        file_name=file_name,
-                        can_notify=can_notify,
-                        is_reply=False,
-                        parent_id=None
-                    )
-                else:
-                    st.error("⚠️ Please enter a comment before posting.")
-
-def handle_comment_submission_with_mentions(comment_text: str, entity_type: str, entity_id: str,
-                                           entity_name: str, file_owner: str, file_name: str,
-                                           can_notify: bool, is_reply: bool, parent_id: str = None):
-    """Handle comment submission with @mentions processing"""
-    
-    print(f"[COMMENT_SUBMIT] Handling comment submission with mentions")
-    print(f"[COMMENT_SUBMIT] Entity: {entity_type}/{entity_id}")
-    print(f"[COMMENT_SUBMIT] File Owner: {file_owner}")
-    
-    # Extract and validate mentions
-    mentions = extract_mentions(comment_text)
-    valid_mentions = validate_mentions(mentions)
-    
-    print(f"[MENTIONS] Found mentions: {mentions}")
-    print(f"[MENTIONS] Valid mentions: {valid_mentions}")
-    
-    # Create comment data
-    comment_id = str(uuid.uuid4())
-    current_time = datetime.now()
-    
-    comment_data = {
-        'entity_type': entity_type,
-        'entity_id': entity_id,
-        'user_name': st.session_state.current_user,
-        'text': comment_text,
-        'created_at': current_time.isoformat(),  # Convert to ISO string for database
-        'parent_id': parent_id,
-        'user_role': st.session_state.user_role
-    }
-    
-    print(f"[COMMENT_SUBMIT] Created timestamp: {current_time.isoformat()}")
-    
-    # Save comment to database
-    if save_comment(comment_id, comment_data):
-        print(f"[COMMENT_SUBMIT] Comment saved successfully: {comment_id}")
-        
-        # Send file owner notification (existing logic)
-        owner_email_sent = False
-        if can_notify and file_owner and file_name:
-            print(f"[COMMENT_SUBMIT] Attempting to send file owner notification")
-            owner_email_sent = send_email_notification(
-                file_owner=file_owner,
-                commenter=st.session_state.current_user,
-                file_name=file_name,
-                entity_name=entity_name,
-                comment_text=comment_text,
-                is_reply=is_reply
-            )
-        
-        # Send mention notifications (new logic)
-        mention_count = 0
-        if valid_mentions:
-            print(f"[MENTIONS] Sending notifications to {len(valid_mentions)} mentioned users")
-            send_mention_notifications(
-                mentions=valid_mentions,
-                commenter=st.session_state.current_user,
-                file_name=file_name,
-                entity_name=entity_name,
-                comment_text=comment_text,
-                is_reply=is_reply
-            )
-            mention_count = len(valid_mentions)
-        
-        # Show comprehensive success message
-        success_parts = []
-        if owner_email_sent:
-            success_parts.append(f"{file_owner} notified")
-        if mention_count > 0:
-            success_parts.append(f"{mention_count} user(s) mentioned")
-        
-        if success_parts:
-            notification_text = " and ".join(success_parts)
-            st.success(f"✅ {'Reply' if is_reply else 'Comment'} posted! {notification_text}!")
-        else:
-            st.success(f"✅ {'Reply' if is_reply else 'Comment'} posted successfully!")
-        
-        # Clear reply state if this was a reply
-        if is_reply and parent_id:
-            if f"replying_to_{parent_id}" in st.session_state:
-                del st.session_state[f"replying_to_{parent_id}"]
-        
-        st.rerun()
-    else:
-        st.error("❌ Failed to save comment. Please try again.")
-        print(f"[COMMENT_SUBMIT] Failed to save comment")
-
-# ============================================================================
-# HELPER FUNCTIONS (EXISTING)
+# HELPER FUNCTIONS
 # ============================================================================
 
 def check_notification_conditions(file_owner: str) -> bool:
@@ -492,6 +227,126 @@ def check_notification_conditions(file_owner: str) -> bool:
     
     print(f"[NOTIFICATION] Owner: {file_owner}, Email: {owner_email}, Can notify: {is_other_file and has_email}")
     return is_other_file and has_email
+
+def can_resolve_comment(comment: dict, file_owner: str) -> bool:
+    """Check if current user can resolve a comment"""
+    # File owners, admins, and partners can resolve any comment
+    # Comment authors can resolve their own comments
+    user_name = comment.get('user_name', '')
+    return (
+        st.session_state.user_role in ['Admin', 'Partner'] or
+        file_owner == st.session_state.current_user or
+        user_name == st.session_state.current_user
+    )
+
+# ============================================================================
+# COMMENT FORM
+# ============================================================================
+
+def show_comment_form(entity_type: str, entity_id: str, entity_name: str,
+                     file_owner: str, file_name: str, can_notify: bool):
+    """Display the add comment form"""
+    
+    with st.expander("➕ Add New Comment", expanded=False):
+        # Show notification status
+        if can_notify:
+            owner_email = get_user_email(file_owner)
+            st.success(f"📧 Your comment will notify **{file_owner}** at {owner_email}")
+        elif file_owner and file_owner != st.session_state.current_user:
+            st.warning(f"⚠️ {file_owner} has no email configured - no notification will be sent")
+        elif file_owner == st.session_state.current_user:
+            st.info("ℹ️ You're commenting on your own file - no email notification needed")
+        
+        # Comment form
+        with st.form(f"comment_form_{entity_type}_{entity_id}", clear_on_submit=True):
+            comment_text = st.text_area(
+                "Write your comment:",
+                placeholder="Share your thoughts, ask questions, or report issues...",
+                key=f"comment_input_{entity_type}_{entity_id}",
+                height=100
+            )
+            
+            submitted = st.form_submit_button("💬 Post Comment", use_container_width=True)
+            
+            if submitted:
+                if comment_text and comment_text.strip():
+                    handle_comment_submission(
+                        comment_text=comment_text.strip(),
+                        entity_type=entity_type,
+                        entity_id=entity_id,
+                        entity_name=entity_name,
+                        file_owner=file_owner,
+                        file_name=file_name,
+                        can_notify=can_notify,
+                        is_reply=False,
+                        parent_id=None
+                    )
+                else:
+                    st.error("⚠️ Please enter a comment before posting.")
+
+def handle_comment_submission(comment_text: str, entity_type: str, entity_id: str,
+                             entity_name: str, file_owner: str, file_name: str,
+                             can_notify: bool, is_reply: bool, parent_id: str = None):
+    """Handle comment submission with email notification"""
+    
+    print(f"[COMMENT_SUBMIT] Handling comment submission")
+    print(f"[COMMENT_SUBMIT] Entity: {entity_type}/{entity_id}")
+    print(f"[COMMENT_SUBMIT] File Owner: {file_owner}")
+    print(f"[COMMENT_SUBMIT] Can Notify: {can_notify}")
+    
+    # Create comment data
+    comment_id = str(uuid.uuid4())
+    current_time = datetime.now()
+    
+    comment_data = {
+        'entity_type': entity_type,
+        'entity_id': entity_id,
+        'user_name': st.session_state.current_user,
+        'text': comment_text,
+        'created_at': current_time.isoformat(),
+        'parent_id': parent_id,
+        'user_role': st.session_state.user_role,
+        'resolved': False,  # New comments start unresolved
+        'resolved_by': None,
+        'resolved_at': None
+    }
+    
+    print(f"[COMMENT_SUBMIT] Created timestamp: {current_time.isoformat()}")
+    
+    # Save comment to database
+    if save_comment(comment_id, comment_data):
+        print(f"[COMMENT_SUBMIT] Comment saved successfully: {comment_id}")
+        
+        # Send email notification if conditions are met
+        email_sent = False
+        if can_notify and file_owner and file_name:
+            print(f"[COMMENT_SUBMIT] Attempting to send email notification")
+            email_sent = send_email_notification(
+                file_owner=file_owner,
+                commenter=st.session_state.current_user,
+                file_name=file_name,
+                entity_name=entity_name,
+                comment_text=comment_text,
+                is_reply=is_reply
+            )
+        else:
+            print(f"[COMMENT_SUBMIT] Email notification skipped - conditions not met")
+        
+        # Show success message
+        if email_sent:
+            st.success(f"✅ {'Reply' if is_reply else 'Comment'} posted and {file_owner} notified via email!")
+        else:
+            st.success(f"✅ {'Reply' if is_reply else 'Comment'} posted successfully!")
+        
+        # Clear reply state if this was a reply
+        if is_reply and parent_id:
+            if f"replying_to_{parent_id}" in st.session_state:
+                del st.session_state[f"replying_to_{parent_id}"]
+        
+        st.rerun()
+    else:
+        st.error("❌ Failed to save comment. Please try again.")
+        print(f"[COMMENT_SUBMIT] Failed to save comment")
 
 def send_email_notification(file_owner: str, commenter: str, file_name: str,
                            entity_name: str, comment_text: str, is_reply: bool) -> bool:
@@ -525,24 +380,27 @@ def send_email_notification(file_owner: str, commenter: str, file_name: str,
         return False
 
 # ============================================================================
-# ENHANCED COMMENT DISPLAY WITH MENTIONS
+# COMMENT DISPLAY WITH RESOLUTION
 # ============================================================================
 
 def display_comments_list(entity_comments: dict, entity_type: str, entity_id: str,
-                         file_owner: str, file_name: str, entity_name: str):
-    """Display list of comments with @mentions highlighting"""
+                         file_owner: str, file_name: str, entity_name: str, sort_newest_first: bool = True):
+    """Display list of comments with resolution functionality"""
     
+    # Get root comments (no parent)
     root_comments = {
         cid: comment for cid, comment in entity_comments.items()
         if not comment.get('parent_id')
     }
     
+    # Sort comments
     sorted_comments = sorted(
         root_comments.items(),
         key=lambda x: parse_timestamp(x[1].get('created_at')),
-        reverse=True
+        reverse=sort_newest_first
     )
     
+    # Display each comment thread
     for comment_id, comment in sorted_comments:
         display_comment_with_replies(
             comment_id=comment_id,
@@ -559,8 +417,9 @@ def display_comments_list(entity_comments: dict, entity_type: str, entity_id: st
 def display_comment_with_replies(comment_id: str, comment: dict, all_comments: dict,
                                 entity_type: str, entity_id: str, file_owner: str,
                                 file_name: str, entity_name: str, depth: int):
-    """Display a single comment with @mentions highlighting and its replies"""
+    """Display a single comment with resolution status and its replies"""
     
+    # Create indentation for nested comments
     if depth > 0:
         cols = st.columns([depth * 0.05, 1])
         container = cols[1]
@@ -568,33 +427,84 @@ def display_comment_with_replies(comment_id: str, comment: dict, all_comments: d
         container = st.container()
     
     with container:
-        with st.container(border=True):
-            col1, col2, col3 = st.columns([0.1, 5, 0.5])
+        # Determine border color based on resolution status
+        is_resolved = comment.get('resolved', False)
+        border_color = "rgba(76, 175, 80, 0.3)" if is_resolved else None
+        
+        # Comment container with conditional styling
+        if is_resolved:
+            comment_container = st.container()
+            comment_container.markdown(
+                """
+                <div style="border: 2px solid #4CAF50; border-radius: 8px; padding: 10px; margin: 5px 0; background-color: rgba(76, 175, 80, 0.1);">
+                """,
+                unsafe_allow_html=True
+            )
+        else:
+            comment_container = st.container(border=True)
+        
+        with comment_container:
+            # Header row
+            col1, col2, col3, col4 = st.columns([0.1, 4, 1, 0.5])
             
+            # Role badge
             with col1:
                 role_badge = get_role_badge(comment.get('user_role', 'User'))
                 st.write(role_badge)
             
+            # Comment content
             with col2:
                 user_name = comment.get('user_name') or comment.get('user', 'Unknown')
                 timestamp = format_timestamp(comment.get('created_at'))
                 st.markdown(f"**{user_name}** · {timestamp}")
                 
-                # Display comment with @mentions highlighted
+                # Comment text
                 comment_text = comment['text']
-                formatted_text = format_comment_with_mentions(comment_text)
-                st.markdown(formatted_text, unsafe_allow_html=True)
+                if is_resolved:
+                    st.markdown(f"~~{comment_text}~~")  # Strikethrough for resolved
+                else:
+                    st.write(comment_text)
                 
+                # Reply button
                 if st.button("↩️ Reply", key=f"reply_{comment_id}", use_container_width=False):
                     st.session_state[f"replying_to_{comment_id}"] = True
             
+            # Resolution controls
             with col3:
+                if is_resolved:
+                    st.success("✅ Resolved")
+                    resolved_by = comment.get('resolved_by', 'Unknown')
+                    resolved_at = format_timestamp(comment.get('resolved_at'))
+                    st.caption(f"by {resolved_by}")
+                    st.caption(f"on {resolved_at}")
+                    
+                    # Unresolve button
+                    if can_resolve_comment(comment, file_owner):
+                        if st.button("🔄 Unresolve", key=f"unresolve_{comment_id}", 
+                                   help="Mark as unresolved"):
+                            if unresolve_comment(comment_id):
+                                st.success("Comment marked as unresolved!")
+                                st.rerun()
+                else:
+                    st.warning("❓ Unresolved")
+                    
+                    # Resolve button
+                    if can_resolve_comment(comment, file_owner):
+                        if st.button("✅ Resolve", key=f"resolve_{comment_id}", 
+                                   help="Mark as resolved"):
+                            if resolve_comment(comment_id):
+                                st.success("Comment resolved!")
+                                st.rerun()
+            
+            # Delete button
+            with col4:
                 if can_delete_comment(comment):
                     if st.button("🗑️", key=f"delete_{comment_id}", help="Delete comment"):
                         delete_comment_handler(comment_id)
             
+            # Reply form (if replying)
             if st.session_state.get(f"replying_to_{comment_id}", False):
-                show_reply_form_with_mentions(
+                show_reply_form(
                     parent_id=comment_id,
                     entity_type=entity_type,
                     entity_id=entity_id,
@@ -603,6 +513,11 @@ def display_comment_with_replies(comment_id: str, comment: dict, all_comments: d
                     file_name=file_name
                 )
         
+        # Close the custom styled div for resolved comments
+        if is_resolved:
+            st.markdown("</div>", unsafe_allow_html=True)
+        
+        # Display replies
         replies = get_replies(comment_id, all_comments)
         for reply_id, reply in replies:
             display_comment_with_replies(
@@ -617,70 +532,29 @@ def display_comment_with_replies(comment_id: str, comment: dict, all_comments: d
                 depth=depth + 1
             )
 
-def show_reply_form_with_mentions(parent_id: str, entity_type: str, entity_id: str,
-                                 entity_name: str, file_owner: str, file_name: str):
-    """Show reply form with @mentions support and user selection"""
+def show_reply_form(parent_id: str, entity_type: str, entity_id: str,
+                   entity_name: str, file_owner: str, file_name: str):
+    """Show reply form for a comment"""
     
     can_notify = check_notification_conditions(file_owner)
     
-    # Initialize reply text in session state if not exists
-    reply_key = f"reply_draft_{parent_id}"
-    if reply_key not in st.session_state:
-        st.session_state[reply_key] = ""
-    
-    # Mention selector for replies (OUTSIDE the form)
-    available_users = get_available_users()
-    other_users = [user for user in available_users if user != st.session_state.current_user]
-    
-    if other_users:
-        st.markdown("**👥 Mention in Reply:**")
-        mention_cols = st.columns(min(len(other_users), 4))  # Limit to 4 columns for space
-        
-        for i, user in enumerate(other_users[:4]):  # Show max 4 users
-            with mention_cols[i]:
-                if st.button(f"@{user}", key=f"reply_mention_{user}_{parent_id}", 
-                            help=f"Add @{user} to your reply"):
-                    # Add mention to reply text
-                    current_text = st.session_state[reply_key]
-                    if current_text and not current_text.endswith(' '):
-                        current_text += " "
-                    st.session_state[reply_key] = current_text + f"@{user} "
-                    st.rerun()
-    
-    # Reply form (mention buttons are now OUTSIDE the form)
     with st.form(f"reply_form_{parent_id}", clear_on_submit=True):
         if can_notify:
             st.info(f"📧 Your reply will notify {file_owner}")
         
         reply_text = st.text_area(
             "Write your reply:", 
-            value=st.session_state[reply_key],
             key=f"reply_input_{parent_id}",
-            placeholder="Your reply... Click buttons above to mention someone!",
+            placeholder="Your reply...",
             height=80
         )
-        
-        # Update session state with current text
-        if reply_text != st.session_state[reply_key]:
-            st.session_state[reply_key] = reply_text
-        
-        # Preview mentions in reply
-        if reply_text:
-            mentions = extract_mentions(reply_text)
-            if mentions:
-                valid_mentions = validate_mentions(mentions)
-                if valid_mentions:
-                    st.success(f"✅ Will notify: {', '.join(valid_mentions)}")
         
         col1, col2 = st.columns(2)
         
         with col1:
             if st.form_submit_button("Post Reply", use_container_width=True):
                 if reply_text and reply_text.strip():
-                    # Clear the draft after successful submission
-                    st.session_state[reply_key] = ""
-                    
-                    handle_comment_submission_with_mentions(
+                    handle_comment_submission(
                         comment_text=reply_text.strip(),
                         entity_type=entity_type,
                         entity_id=entity_id,
@@ -696,13 +570,11 @@ def show_reply_form_with_mentions(parent_id: str, entity_type: str, entity_id: s
         
         with col2:
             if st.form_submit_button("Cancel", use_container_width=True):
-                # Clear the draft when canceling
-                st.session_state[reply_key] = ""
                 del st.session_state[f"replying_to_{parent_id}"]
                 st.rerun()
 
 # ============================================================================
-# UTILITY FUNCTIONS (EXISTING)
+# UTILITY FUNCTIONS
 # ============================================================================
 
 def get_role_badge(role: str) -> str:
@@ -796,7 +668,6 @@ def show_debug_panel(entity_type: str, entity_id: str, file_owner: str, file_nam
             st.markdown("**File Context:**")
             st.code(f"Owner: {file_owner}")
             st.code(f"File: {file_name}")
-            st.code(f"Available Users: {get_available_users()}")
         
         with col3:
             st.markdown("**Current User:**")
