@@ -70,8 +70,3 @@ def show_sidebar():
         # Update session state when page changes
         if page != st.session_state.page:
             st.session_state.page = page
-        
-        st.markdown("---")
-        st.markdown("🔧 **Problem File Tracker v4.0**")
-        st.markdown("🗄️ **Database**: Supabase (Persistent)")
-        st.markdown("✨ **Features**: Partners, Comments, Contacts")
