@@ -232,8 +232,15 @@ def analyze_comments_for_file(problem_file):
     file_comments = {}
     resolved_comments = 0
     
-    # Get all tasks and subtasks IDs for this file
+    # Get the problem file ID - this is what comments are likely attached to
+    problem_file_id = problem_file.get('id')
+    
+    # Get all possible entity IDs for this file
     entity_ids = set()
+    if problem_file_id:
+        entity_ids.add(problem_file_id)
+    
+    # Also add task and subtask IDs in case comments are attached there
     for task_id, task in problem_file.get('tasks', {}).items():
         entity_ids.add(task_id)
         for subtask_id in task.get('subtasks', {}).keys():
@@ -242,7 +249,9 @@ def analyze_comments_for_file(problem_file):
     # Filter comments for this file
     all_comments = st.session_state.data.get('comments', {})
     for comment_id, comment in all_comments.items():
-        if comment.get('entity_id') in entity_ids:
+        # Check if this comment belongs to this problem file
+        comment_entity_id = comment.get('entity_id')
+        if comment_entity_id in entity_ids:
             user = comment.get('user_name', comment.get('user', 'Unknown'))
             if user not in file_comments:
                 file_comments[user] = {
@@ -265,9 +274,9 @@ def analyze_comments_for_file(problem_file):
             else:
                 file_comments[user]['as_user'] += 1
             
-            # Check if comment is marked as resolved - handle both boolean and string values
+            # Check if comment is resolved - handle boolean values from CSV
             comment_resolved = comment.get('resolved', False)
-            if comment_resolved is True or (isinstance(comment_resolved, str) and comment_resolved.lower() == 'true'):
+            if comment_resolved is True:
                 file_comments[user]['resolved'] += 1
                 resolved_comments += 1
             
