@@ -389,8 +389,7 @@ def generate_pdf_report(problem_file):
             backColor=colors.lightgrey,
             leftIndent=6,
             rightIndent=6,
-            spaceBefore=6,
-            spaceAfter=12
+            spaceBefore=6
         )
         
         # Build PDF content
