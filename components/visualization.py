@@ -265,8 +265,9 @@ def analyze_comments_for_file(problem_file):
             else:
                 file_comments[user]['as_user'] += 1
             
-            # Check if comment is marked as resolved
-            if comment.get('resolved', False):
+            # Check if comment is marked as resolved - handle both boolean and string values
+            comment_resolved = comment.get('resolved', False)
+            if comment_resolved is True or (isinstance(comment_resolved, str) and comment_resolved.lower() == 'true'):
                 file_comments[user]['resolved'] += 1
                 resolved_comments += 1
             
