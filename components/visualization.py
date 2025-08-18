@@ -348,7 +348,7 @@ def create_progress_bar_drawing(width, height, progress_percent, fill_color=colo
     return drawing
 
 def generate_pdf_report(problem_file):
-    """Generate actual PDF report"""
+    """Generate actual PDF report in landscape with charts"""
     try:
         export_data = create_pdf_export_data(problem_file)
         if not export_data:
@@ -357,14 +357,15 @@ def generate_pdf_report(problem_file):
         # Create PDF buffer
         buffer = BytesIO()
         
-        # Create PDF document
+        # Create PDF document in landscape
+        from reportlab.lib.pagesizes import landscape
         doc = SimpleDocTemplate(
             buffer,
-            pagesize=A4,
-            rightMargin=72,
-            leftMargin=72,
-            topMargin=72,
-            bottomMargin=18
+            pagesize=landscape(A4),
+            rightMargin=36,
+            leftMargin=36,
+            topMargin=36,
+            bottomMargin=36
         )
         
         # Define styles
@@ -372,8 +373,8 @@ def generate_pdf_report(problem_file):
         title_style = ParagraphStyle(
             'CustomTitle',
             parent=styles['Heading1'],
-            fontSize=24,
-            spaceAfter=30,
+            fontSize=20,
+            spaceAfter=20,
             alignment=1,  # Center alignment
             textColor=colors.darkblue
         )
@@ -381,8 +382,8 @@ def generate_pdf_report(problem_file):
         heading_style = ParagraphStyle(
             'CustomHeading',
             parent=styles['Heading2'],
-            fontSize=16,
-            spaceAfter=12,
+            fontSize=14,
+            spaceAfter=10,
             textColor=colors.darkblue,
             borderWidth=1,
             borderColor=colors.lightgrey,
@@ -397,77 +398,182 @@ def generate_pdf_report(problem_file):
         
         # Title and header
         story.append(Paragraph("📊 Project Analytics Report", title_style))
-        story.append(Spacer(1, 12))
+        story.append(Spacer(1, 10))
         
-        # Project info table
+        # Project info table - make it more compact for landscape
         project_info = [
-            ['Project Name:', export_data['project']['name']],
-            ['Owner:', export_data['project']['owner']],
-            ['Project Period:', f"{export_data['project']['start_date']} to {export_data['project']['end_date']}"],
-            ['Report Generated:', datetime.now().strftime('%Y-%m-%d %H:%M')]
+            ['Project:', export_data['project']['name'], 'Owner:', export_data['project']['owner']],
+            ['Start Date:', export_data['project']['start_date'], 'End Date:', export_data['project']['end_date']],
+            ['Report Generated:', datetime.now().strftime('%Y-%m-%d %H:%M'), '', '']
         ]
         
-        project_table = Table(project_info, colWidths=[2*inch, 4*inch])
+        project_table = Table(project_info, colWidths=[1.5*inch, 2.5*inch, 1.5*inch, 2.5*inch])
         project_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (0, -1), colors.lightgrey),
+            ('BACKGROUND', (2, 0), (2, -1), colors.lightgrey),
             ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
             ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
             ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
             ('GRID', (0, 0), (-1, -1), 1, colors.black),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ]))
         
         story.append(project_table)
-        story.append(Spacer(1, 20))
+        story.append(Spacer(1, 15))
         
-        # Project Summary
-        story.append(Paragraph("📈 Project Summary", heading_style))
+        # Create charts using ReportLab graphics
+        from reportlab.graphics.charts.piecharts import Pie
+        from reportlab.graphics.charts.barcharts import HorizontalBarChart
+        from reportlab.graphics import renderPDF
+        from reportlab.lib import colors as rl_colors
         
+        # Calculate chart data
+        total_tasks = export_data['summary']['total_tasks']
+        total_subtasks = export_data['summary']['total_subtasks']
+        completed_subtasks = export_data['summary']['completed_subtasks']
+        in_progress = 0
+        not_started = 0
+        overdue = 0
+        
+        # Calculate status distribution from actual task data
+        for task in problem_file.get('tasks', {}).values():
+            for subtask in task.get('subtasks', {}).values():
+                if subtask['progress'] == 100:
+                    pass  # already counted in completed_subtasks
+                elif subtask['progress'] > 0:
+                    in_progress += 1
+                else:
+                    not_started += 1
+                
+                # Check if overdue
+                if (subtask['projected_end_date'].date() < datetime.now().date() and 
+                    subtask['progress'] < 100):
+                    overdue += 1
+        
+        # Create side-by-side charts and summary
+        chart_table_data = []
+        
+        # Row 1: Charts
+        charts_row = []
+        
+        # Pie Chart for Task Status
+        if total_subtasks > 0:
+            pie_drawing = Drawing(200, 150)
+            pie = Pie()
+            pie.x = 50
+            pie.y = 50
+            pie.width = 100
+            pie.height = 100
+            
+            pie.data = [completed_subtasks, in_progress, not_started, overdue]
+            pie.labels = ['Completed', 'In Progress', 'Not Started', 'Overdue']
+            pie.slices.strokeWidth = 0.5
+            pie.slices[0].fillColor = rl_colors.green
+            pie.slices[1].fillColor = rl_colors.yellow
+            pie.slices[2].fillColor = rl_colors.grey
+            pie.slices[3].fillColor = rl_colors.red
+            
+            pie_drawing.add(pie)
+            
+            # Add title
+            from reportlab.graphics.shapes import String
+            title = String(100, 130, 'Task Status Distribution', textAnchor='middle')
+            title.fontSize = 10
+            title.fontName = 'Helvetica-Bold'
+            pie_drawing.add(title)
+            
+            charts_row.append(pie_drawing)
+        else:
+            charts_row.append("No task data")
+        
+        # Team Workload Bar Chart
+        if export_data['team_workload']:
+            bar_drawing = Drawing(250, 150)
+            bar = HorizontalBarChart()
+            bar.x = 20
+            bar.y = 30
+            bar.width = 200
+            bar.height = 80
+            
+            users = list(export_data['team_workload'].keys())[:5]  # Limit to 5 users for space
+            completed_data = [export_data['team_workload'][user]['completed'] for user in users]
+            total_data = [export_data['team_workload'][user]['total'] for user in users]
+            
+            bar.data = [completed_data, total_data]
+            bar.categoryAxis.categoryNames = users
+            bar.bars[0].fillColor = rl_colors.green
+            bar.bars[1].fillColor = rl_colors.lightblue
+            
+            bar_drawing.add(bar)
+            
+            # Add title
+            title = String(125, 130, 'Team Workload (Top 5)', textAnchor='middle')
+            title.fontSize = 10
+            title.fontName = 'Helvetica-Bold'
+            bar_drawing.add(title)
+            
+            charts_row.append(bar_drawing)
+        else:
+            charts_row.append("No workload data")
+        
+        # Summary metrics as a mini table
         summary_data = [
             ['Metric', 'Value'],
-            ['Total Tasks', str(export_data['summary']['total_tasks'])],
-            ['Total Subtasks', str(export_data['summary']['total_subtasks'])],
-            ['Completed Subtasks', str(export_data['summary']['completed_subtasks'])],
+            ['Total Tasks', str(total_tasks)],
+            ['Total Subtasks', str(total_subtasks)],
+            ['Completed', str(completed_subtasks)],
             ['Completion Rate', export_data['summary']['completion_rate']],
             ['Total Comments', str(export_data['summary']['total_comments'])],
             ['Resolved Comments', str(export_data['summary']['resolved_comments'])]
         ]
         
-        summary_table = Table(summary_data, colWidths=[3*inch, 2*inch])
+        summary_table = Table(summary_data, colWidths=[1.2*inch, 0.8*inch])
         summary_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
             ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
             ('GRID', (0, 0), (-1, -1), 1, colors.black),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ]))
         
-        story.append(summary_table)
+        charts_row.append(summary_table)
+        
+        # Create table with charts
+        charts_table = Table([charts_row], colWidths=[2.5*inch, 3*inch, 2*inch])
+        charts_table.setStyle(TableStyle([
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ]))
+        
+        story.append(charts_table)
         story.append(Spacer(1, 20))
         
-        # Team Workload
-        story.append(Paragraph("👥 Team Workload", heading_style))
+        # Team Workload Section
+        story.append(Paragraph("👥 Team Workload Analysis", heading_style))
         
-        workload_data = [['Team Member', 'Total Subtasks', 'Completed', 'Completion Rate', 'Progress']]
+        workload_data = [['Team Member', 'Total Subtasks', 'Completed', 'Completion Rate', 'Progress Bar']]
         
         for user, workload in export_data['team_workload'].items():
             completion_rate = (workload['completed'] / workload['total'] * 100) if workload['total'] > 0 else 0
+            
+            # Create simple progress bar representation
+            progress_chars = int(completion_rate / 10)  # 10 chars max
+            progress_bar = '█' * progress_chars + '░' * (10 - progress_chars)
+            
             workload_data.append([
                 user,
                 str(workload['total']),
                 str(workload['completed']),
                 f"{completion_rate:.1f}%",
-                ""  # Progress bar will be added as drawing
+                progress_bar
             ])
         
-        workload_table = Table(workload_data, colWidths=[1.5*inch, 1*inch, 1*inch, 1*inch, 1.5*inch])
-        
-        # Add progress bars to the table
-        table_style = [
+        workload_table = Table(workload_data, colWidths=[2*inch, 1*inch, 1*inch, 1*inch, 1.5*inch])
+        workload_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
@@ -476,16 +582,15 @@ def generate_pdf_report(problem_file):
             ('FONTSIZE', (0, 0), (-1, -1), 9),
             ('GRID', (0, 0), (-1, -1), 1, colors.black),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ]
+        ]))
         
-        workload_table.setStyle(TableStyle(table_style))
         story.append(workload_table)
-        story.append(Spacer(1, 20))
+        story.append(Spacer(1, 15))
         
         # Comments Activity
-        story.append(Paragraph("💬 Comments Activity", heading_style))
+        story.append(Paragraph("💬 Comments Activity Analysis", heading_style))
         
-        comments_data = [['User', 'Total', 'Resolved', 'Resolution Rate', 'Mentions Given', 'Mentions Received', 'Admin', 'Partner', 'User']]
+        comments_data = [['User', 'Total', 'Resolved', 'Resolution Rate', 'Mentions Given', 'Mentions Received', 'Admin', 'Partner', 'User Role']]
         
         for user, activity in export_data['comments_activity'].items():
             resolution_rate = (activity['resolved'] / activity['total'] * 100) if activity['total'] > 0 else 0
@@ -501,7 +606,7 @@ def generate_pdf_report(problem_file):
                 str(activity['as_user'])
             ])
         
-        comments_table = Table(comments_data, colWidths=[1*inch, 0.6*inch, 0.6*inch, 0.8*inch, 0.7*inch, 0.7*inch, 0.5*inch, 0.6*inch, 0.5*inch])
+        comments_table = Table(comments_data, colWidths=[1.2*inch, 0.6*inch, 0.6*inch, 0.8*inch, 0.7*inch, 0.7*inch, 0.5*inch, 0.6*inch, 0.5*inch])
         comments_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -515,6 +620,49 @@ def generate_pdf_report(problem_file):
         
         story.append(comments_table)
         story.append(Spacer(1, 20))
+        
+        # Add Gantt Chart representation if we have task data
+        if problem_file.get('tasks'):
+            story.append(PageBreak())  # New page for Gantt
+            story.append(Paragraph("📅 Project Timeline Overview", heading_style))
+            
+            # Create a simplified Gantt chart table
+            gantt_data = [['Task', 'Assigned To', 'Start Date', 'End Date', 'Progress', 'Status']]
+            
+            for task_id, task in problem_file.get('tasks', {}).items():
+                for subtask_id, subtask in task.get('subtasks', {}).items():
+                    # Determine status
+                    if subtask['progress'] == 100:
+                        status = 'Complete ✓'
+                    elif subtask['progress'] > 0:
+                        status = f"In Progress ({subtask['progress']}%)"
+                    elif subtask['projected_end_date'].date() < datetime.now().date():
+                        status = 'Overdue ⚠️'
+                    else:
+                        status = 'Not Started'
+                    
+                    gantt_data.append([
+                        f"{task['name']} - {subtask['name']}"[:30] + "..." if len(f"{task['name']} - {subtask['name']}") > 30 else f"{task['name']} - {subtask['name']}",
+                        subtask['assigned_to'],
+                        subtask['start_date'].strftime('%m/%d/%Y'),
+                        subtask['projected_end_date'].strftime('%m/%d/%Y'),
+                        f"{subtask['progress']}%",
+                        status
+                    ])
+            
+            gantt_table = Table(gantt_data, colWidths=[3*inch, 1.5*inch, 1*inch, 1*inch, 0.8*inch, 1.5*inch])
+            gantt_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ]))
+            
+            story.append(gantt_table)
         
         # Footer
         footer_style = ParagraphStyle(
