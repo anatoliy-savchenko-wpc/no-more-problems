@@ -1,681 +1,852 @@
 """
-Comments system with resolution functionality
+Enhanced Visualization components with actual PDF export functionality
 """
 import streamlit as st
-import uuid
-from datetime import datetime
-from database import save_comment, delete_comment, init_supabase
-from email_handler import send_partner_comment_notification, get_user_email
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from datetime import datetime, timedelta
+import base64
+from io import BytesIO
+import plotly.io as pio
+import re
 
-# ============================================================================
-# DATABASE HELPER FUNCTIONS
-# ============================================================================
+# PDF generation imports
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
+from reportlab.lib.units import inch
+from reportlab.graphics.shapes import Drawing, Rect
+from reportlab.graphics.charts.barcharts import VerticalBarChart
+from reportlab.graphics.charts.piecharts import Pie
+from reportlab.graphics import renderPDF
 
-def get_supabase_client():
-    """Get Supabase client"""
-    from database import init_supabase
-    return init_supabase()
-
-def get_file_owner_from_entity(entity_type: str, entity_id: str):
-    """Get file owner and name by looking up through database relationships"""
+def create_gantt_chart(problem_file):
+    """Create enhanced Gantt chart with boundaries and visual improvements"""
     try:
-        supabase = get_supabase_client()
+        # Get project dates with fallbacks
+        project_start = problem_file.get('project_start_date', datetime.now())
+        project_end = problem_file.get('project_end_date')
         
-        if entity_type == 'task':
-            response = supabase.table('tasks').select(
-                'problem_files(owner, problem_name)'
-            ).eq('id', entity_id).execute()
-            
-            if response.data and len(response.data) > 0:
-                problem_file = response.data[0].get('problem_files')
-                if problem_file:
-                    return problem_file['owner'], problem_file['problem_name']
+        # Ensure we have valid dates
+        if not project_end:
+            project_end = project_start + timedelta(days=30)
         
-        elif entity_type == 'subtask':
-            response = supabase.table('subtasks').select(
-                'tasks(problem_files(owner, problem_name))'
-            ).eq('id', entity_id).execute()
-            
-            if response.data and len(response.data) > 0:
-                task = response.data[0].get('tasks')
-                if task:
-                    problem_file = task.get('problem_files')
-                    if problem_file:
-                        return problem_file['owner'], problem_file['problem_name']
+        # Convert to datetime if needed
+        if not isinstance(project_start, datetime):
+            project_start = datetime.now()
+        if not isinstance(project_end, datetime):
+            project_end = project_start + timedelta(days=30)
         
-        print(f"[DB] Could not find file owner for {entity_type} {entity_id}")
-        return None, None
-        
-    except Exception as e:
-        print(f"[DB ERROR] Error getting file owner: {e}")
-        return None, None
-
-def get_entity_comments_from_db(entity_type: str, entity_id: str):
-    """Get all comments for a specific entity from database"""
-    try:
-        supabase = get_supabase_client()
-        
-        response = supabase.table('comments').select('*').eq(
-            'entity_type', entity_type
-        ).eq('entity_id', entity_id).order('created_at', desc=False).execute()
-        
-        entity_comments = {}
-        if response.data:
-            for comment in response.data:
-                entity_comments[comment['id']] = comment
+        # Collect task data
+        tasks_data = []
+        for task_id, task in problem_file.get('tasks', {}).items():
+            for subtask_id, subtask in task.get('subtasks', {}).items():
+                # Determine status and color
+                is_overdue = (subtask['projected_end_date'].date() < datetime.now().date() and 
+                             subtask['progress'] < 100)
                 
-        print(f"[DB] Found {len(entity_comments)} comments for {entity_type} {entity_id}")
-        return entity_comments
+                within_bounds = (project_start.date() <= subtask['start_date'].date() <= project_end.date() and
+                               project_start.date() <= subtask['projected_end_date'].date() <= project_end.date())
+                
+                if subtask['progress'] == 100:
+                    color = 'Complete'
+                elif is_overdue:
+                    color = 'Overdue'
+                elif subtask['progress'] > 0:
+                    color = 'In Progress'
+                else:
+                    color = 'Not Started'
+                
+                tasks_data.append({
+                    'Task': f"{task['name']} - {subtask['name']}",
+                    'Start': subtask['start_date'].strftime('%Y-%m-%d'),
+                    'Finish': subtask['projected_end_date'].strftime('%Y-%m-%d'),
+                    'Resource': subtask['assigned_to'],
+                    'Progress': subtask['progress'],
+                    'Status': color,
+                    'Within Bounds': 'Yes' if within_bounds else 'No'
+                })
         
-    except Exception as e:
-        print(f"[DB ERROR] Error getting comments: {e}")
-        return {}
-
-def resolve_comment(comment_id: str) -> bool:
-    """Mark a comment as resolved"""
-    try:
-        supabase = get_supabase_client()
+        if not tasks_data:
+            return None
         
-        update_data = {
-            'resolved': True,
-            'resolved_by': st.session_state.current_user,
-            'resolved_at': datetime.now().isoformat()
+        # Create DataFrame
+        df = pd.DataFrame(tasks_data)
+        
+        # Define color mapping
+        color_map = {
+            'Complete': '#28a745',
+            'In Progress': '#ffc107',
+            'Not Started': '#6c757d',
+            'Overdue': '#dc3545'
         }
         
-        response = supabase.table('comments').update(update_data).eq('id', comment_id).execute()
+        # Create Gantt chart using plotly express
+        fig = px.timeline(
+            df,
+            x_start='Start',
+            x_end='Finish',
+            y='Task',
+            color='Status',
+            color_discrete_map=color_map,
+            hover_data=['Resource', 'Progress', 'Within Bounds'],
+            title=f"Gantt Chart - {problem_file['problem_name']}"
+        )
         
-        if response.data:
-            print(f"[RESOLVE] Comment {comment_id} resolved by {st.session_state.current_user}")
-            return True
-        return False
+        # Update layout
+        fig.update_layout(
+            height=max(400, len(tasks_data) * 50),
+            xaxis_title="Timeline",
+            yaxis_title="Tasks",
+            showlegend=True,
+            hovermode='closest'
+        )
+        
+        # Reverse y-axis to show tasks from top to bottom
+        fig.update_yaxes(autorange="reversed")
+        
+        # Add reference lines as shapes
+        fig.add_shape(
+            type="line",
+            x0=project_start.strftime('%Y-%m-%d'),
+            y0=0,
+            x1=project_start.strftime('%Y-%m-%d'),
+            y1=1,
+            xref="x",
+            yref="paper",
+            line=dict(color="blue", width=2, dash="dash"),
+        )
+        
+        fig.add_shape(
+            type="line",
+            x0=project_end.strftime('%Y-%m-%d'),
+            y0=0,
+            x1=project_end.strftime('%Y-%m-%d'),
+            y1=1,
+            xref="x",
+            yref="paper",
+            line=dict(color="blue", width=2, dash="dash"),
+        )
+        
+        fig.add_shape(
+            type="line",
+            x0=datetime.now().strftime('%Y-%m-%d'),
+            y0=0,
+            x1=datetime.now().strftime('%Y-%m-%d'),
+            y1=1,
+            xref="x",
+            yref="paper",
+            line=dict(color="red", width=2, dash="solid"),
+        )
+        
+        # Add annotations for the reference lines
+        fig.add_annotation(
+            x=project_start.strftime('%Y-%m-%d'),
+            y=1.05,
+            text="Project Start",
+            showarrow=False,
+            xref="x",
+            yref="paper",
+            font=dict(size=10, color="blue"),
+            xanchor="center"
+        )
+        
+        fig.add_annotation(
+            x=project_end.strftime('%Y-%m-%d'),
+            y=1.05,
+            text="Project End",
+            showarrow=False,
+            xref="x",
+            yref="paper",
+            font=dict(size=10, color="blue"),
+            xanchor="center"
+        )
+        
+        fig.add_annotation(
+            x=datetime.now().strftime('%Y-%m-%d'),
+            y=-0.05,
+            text="Today",
+            showarrow=False,
+            xref="x",
+            yref="paper",
+            font=dict(size=10, color="red"),
+            xanchor="center"
+        )
+        
+        return fig
         
     except Exception as e:
-        print(f"[RESOLVE ERROR] Failed to resolve comment {comment_id}: {e}")
-        return False
+        st.error(f"Error creating Gantt chart: {str(e)}")
+        return None
 
-def unresolve_comment(comment_id: str) -> bool:
-    """Mark a comment as unresolved"""
-    try:
-        supabase = get_supabase_client()
+def show_gantt_chart_tab(problem_file):
+    """Display Gantt chart tab"""
+    st.subheader("📈 Project Timeline")
+    
+    # Ensure project has end date
+    if 'project_end_date' not in problem_file or problem_file['project_end_date'] is None:
+        project_start = problem_file.get('project_start_date', datetime.now())
+        problem_file['project_end_date'] = project_start + timedelta(days=30)
+    
+    gantt_fig = create_gantt_chart(problem_file)
+    if gantt_fig:
+        st.plotly_chart(gantt_fig, use_container_width=True)
         
-        update_data = {
-            'resolved': False,
-            'resolved_by': None,
-            'resolved_at': None
+        # Timeline insights
+        st.subheader("📊 Timeline Insights")
+        
+        # Calculate project duration and other metrics
+        all_dates = []
+        overdue_count = 0
+        completed_count = 0
+        
+        for task in problem_file.get('tasks', {}).values():
+            for subtask in task.get('subtasks', {}).values():
+                all_dates.extend([subtask['start_date'], subtask['projected_end_date']])
+                if subtask['progress'] == 100:
+                    completed_count += 1
+                elif subtask['projected_end_date'].date() < datetime.now().date() and subtask['progress'] < 100:
+                    overdue_count += 1
+        
+        if all_dates:
+            project_start = min(all_dates)
+            project_end = max(all_dates)
+            duration_days = (project_end - project_start).days
+            
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Project Duration", f"{duration_days} days")
+            with col2:
+                st.metric("Completed Subtasks", completed_count)
+            with col3:
+                st.metric("Overdue Subtasks", overdue_count)
+            with col4:
+                st.metric("Project End Date", project_end.strftime('%Y-%m-%d'))
+    else:
+        st.info("No tasks to display in Gantt chart. Add some subtasks first!")
+
+def analyze_comments_for_file(problem_file):
+    """Analyze comments specifically for this problem file"""
+    file_comments = {}
+    resolved_comments = 0
+    
+    # Get all tasks and subtasks IDs for this file
+    entity_ids = set()
+    for task_id, task in problem_file.get('tasks', {}).items():
+        entity_ids.add(task_id)
+        for subtask_id in task.get('subtasks', {}).keys():
+            entity_ids.add(subtask_id)
+    
+    # Filter comments for this file
+    all_comments = st.session_state.data.get('comments', {})
+    for comment_id, comment in all_comments.items():
+        if comment.get('entity_id') in entity_ids:
+            user = comment.get('user_name', comment.get('user', 'Unknown'))
+            if user not in file_comments:
+                file_comments[user] = {
+                    'total': 0, 
+                    'as_partner': 0, 
+                    'as_admin': 0, 
+                    'as_user': 0,
+                    'resolved': 0,
+                    'mentions_given': 0,
+                    'mentions_received': 0
+                }
+            
+            file_comments[user]['total'] += 1
+            role = comment.get('user_role', 'User')
+            
+            if role == 'Partner':
+                file_comments[user]['as_partner'] += 1
+            elif role == 'Admin':
+                file_comments[user]['as_admin'] += 1
+            else:
+                file_comments[user]['as_user'] += 1
+            
+            # Check if comment is marked as resolved - handle both boolean and string values
+            comment_resolved = comment.get('resolved', False)
+            if comment_resolved is True or (isinstance(comment_resolved, str) and comment_resolved.lower() == 'true'):
+                file_comments[user]['resolved'] += 1
+                resolved_comments += 1
+            
+            # Count mentions given (in this user's comments)
+            comment_text = comment.get('text', '')
+            mentions_in_comment = len(re.findall(r'@(\w+)', comment_text))
+            file_comments[user]['mentions_given'] += mentions_in_comment
+            
+            # Count mentions received (this user mentioned by others)
+            if f"@{user}" in comment_text and comment.get('user_name') != user:
+                file_comments[user]['mentions_received'] += 1
+    
+    return file_comments, resolved_comments
+
+def create_pdf_export_data(problem_file):
+    """Create comprehensive data for PDF export"""
+    try:
+        # Project overview
+        project_data = {
+            'name': problem_file.get('problem_name', 'Unnamed Project'),
+            'owner': problem_file.get('owner', 'Unknown'),
+            'start_date': problem_file.get('project_start_date', datetime.now()).strftime('%Y-%m-%d'),
+            'end_date': problem_file.get('project_end_date', datetime.now()).strftime('%Y-%m-%d'),
+            'created': problem_file.get('created_date', datetime.now()).strftime('%Y-%m-%d'),
+            'last_modified': problem_file.get('last_modified', datetime.now()).strftime('%Y-%m-%d')
         }
         
-        response = supabase.table('comments').update(update_data).eq('id', comment_id).execute()
+        # Task/Subtask summary
+        total_tasks = len(problem_file.get('tasks', {}))
+        total_subtasks = sum(len(task.get('subtasks', {})) for task in problem_file.get('tasks', {}).values())
+        completed_subtasks = sum(1 for task in problem_file.get('tasks', {}).values() 
+                               for subtask in task.get('subtasks', {}).values() 
+                               if subtask.get('progress', 0) == 100)
         
-        if response.data:
-            print(f"[UNRESOLVE] Comment {comment_id} unresolved by {st.session_state.current_user}")
-            return True
-        return False
+        # Comments analysis
+        file_comments, resolved_comments = analyze_comments_for_file(problem_file)
+        total_comments = sum(data['total'] for data in file_comments.values())
+        
+        # Team workload
+        user_workload = {}
+        for task in problem_file.get('tasks', {}).values():
+            for subtask in task.get('subtasks', {}).values():
+                user = subtask['assigned_to']
+                if user not in user_workload:
+                    user_workload[user] = {'total': 0, 'completed': 0}
+                user_workload[user]['total'] += 1
+                if subtask['progress'] == 100:
+                    user_workload[user]['completed'] += 1
+        
+        return {
+            'project': project_data,
+            'summary': {
+                'total_tasks': total_tasks,
+                'total_subtasks': total_subtasks,
+                'completed_subtasks': completed_subtasks,
+                'completion_rate': f"{(completed_subtasks/total_subtasks*100):.1f}%" if total_subtasks > 0 else "0%",
+                'total_comments': total_comments,
+                'resolved_comments': resolved_comments
+            },
+            'team_workload': user_workload,
+            'comments_activity': file_comments
+        }
+    except Exception as e:
+        st.error(f"Error creating export data: {e}")
+        return None
+
+def create_progress_bar_drawing(width, height, progress_percent, fill_color=colors.green):
+    """Create a progress bar drawing for PDF"""
+    drawing = Drawing(width, height)
+    
+    # Background bar
+    drawing.add(Rect(0, 0, width, height, fillColor=colors.lightgrey, strokeColor=colors.grey))
+    
+    # Progress fill
+    fill_width = width * (progress_percent / 100)
+    if fill_width > 0:
+        drawing.add(Rect(0, 0, fill_width, height, fillColor=fill_color, strokeColor=None))
+    
+    return drawing
+
+def generate_pdf_report(problem_file):
+    """Generate actual PDF report in landscape with charts"""
+    try:
+        export_data = create_pdf_export_data(problem_file)
+        if not export_data:
+            return None
+        
+        # Create PDF buffer
+        buffer = BytesIO()
+        
+        # Create PDF document in landscape
+        from reportlab.lib.pagesizes import landscape
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=landscape(A4),
+            rightMargin=36,
+            leftMargin=36,
+            topMargin=36,
+            bottomMargin=36
+        )
+        
+        # Define styles
+        styles = getSampleStyleSheet()
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=20,
+            spaceAfter=20,
+            alignment=1,  # Center alignment
+            textColor=colors.darkblue
+        )
+        
+        heading_style = ParagraphStyle(
+            'CustomHeading',
+            parent=styles['Heading2'],
+            fontSize=14,
+            spaceAfter=10,
+            textColor=colors.darkblue,
+            borderWidth=1,
+            borderColor=colors.lightgrey,
+            backColor=colors.lightgrey,
+            leftIndent=6,
+            rightIndent=6,
+            spaceBefore=6
+        )
+        
+        # Build PDF content
+        story = []
+        
+        # Title and header
+        story.append(Paragraph("📊 Project Analytics Report", title_style))
+        story.append(Spacer(1, 10))
+        
+        # Project info table - make it more compact for landscape
+        project_info = [
+            ['Project:', export_data['project']['name'], 'Owner:', export_data['project']['owner']],
+            ['Start Date:', export_data['project']['start_date'], 'End Date:', export_data['project']['end_date']],
+            ['Report Generated:', datetime.now().strftime('%Y-%m-%d %H:%M'), '', '']
+        ]
+        
+        project_table = Table(project_info, colWidths=[1.5*inch, 2.5*inch, 1.5*inch, 2.5*inch])
+        project_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (0, -1), colors.lightgrey),
+            ('BACKGROUND', (2, 0), (2, -1), colors.lightgrey),
+            ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ]))
+        
+        story.append(project_table)
+        story.append(Spacer(1, 15))
+        
+        # Create charts using ReportLab graphics
+        from reportlab.graphics.charts.piecharts import Pie
+        from reportlab.graphics.charts.barcharts import HorizontalBarChart
+        from reportlab.graphics import renderPDF
+        from reportlab.lib import colors as rl_colors
+        
+        # Calculate chart data
+        total_tasks = export_data['summary']['total_tasks']
+        total_subtasks = export_data['summary']['total_subtasks']
+        completed_subtasks = export_data['summary']['completed_subtasks']
+        in_progress = 0
+        not_started = 0
+        overdue = 0
+        
+        # Calculate status distribution from actual task data
+        for task in problem_file.get('tasks', {}).values():
+            for subtask in task.get('subtasks', {}).values():
+                if subtask['progress'] == 100:
+                    pass  # already counted in completed_subtasks
+                elif subtask['progress'] > 0:
+                    in_progress += 1
+                else:
+                    not_started += 1
+                
+                # Check if overdue
+                if (subtask['projected_end_date'].date() < datetime.now().date() and 
+                    subtask['progress'] < 100):
+                    overdue += 1
+        
+        # Create side-by-side charts and summary
+        chart_table_data = []
+        
+        # Row 1: Charts
+        charts_row = []
+        
+        # Pie Chart for Task Status
+        if total_subtasks > 0:
+            pie_drawing = Drawing(200, 150)
+            pie = Pie()
+            pie.x = 50
+            pie.y = 50
+            pie.width = 100
+            pie.height = 100
+            
+            pie.data = [completed_subtasks, in_progress, not_started, overdue]
+            pie.labels = ['Completed', 'In Progress', 'Not Started', 'Overdue']
+            pie.slices.strokeWidth = 0.5
+            pie.slices[0].fillColor = rl_colors.green
+            pie.slices[1].fillColor = rl_colors.yellow
+            pie.slices[2].fillColor = rl_colors.grey
+            pie.slices[3].fillColor = rl_colors.red
+            
+            pie_drawing.add(pie)
+            
+            # Add title
+            from reportlab.graphics.shapes import String
+            title = String(100, 130, 'Task Status Distribution', textAnchor='middle')
+            title.fontSize = 10
+            title.fontName = 'Helvetica-Bold'
+            pie_drawing.add(title)
+            
+            charts_row.append(pie_drawing)
+        else:
+            charts_row.append("No task data")
+        
+        # Team Workload Bar Chart
+        if export_data['team_workload']:
+            bar_drawing = Drawing(250, 150)
+            bar = HorizontalBarChart()
+            bar.x = 20
+            bar.y = 30
+            bar.width = 200
+            bar.height = 80
+            
+            users = list(export_data['team_workload'].keys())[:5]  # Limit to 5 users for space
+            completed_data = [export_data['team_workload'][user]['completed'] for user in users]
+            total_data = [export_data['team_workload'][user]['total'] for user in users]
+            
+            bar.data = [completed_data, total_data]
+            bar.categoryAxis.categoryNames = users
+            bar.bars[0].fillColor = rl_colors.green
+            bar.bars[1].fillColor = rl_colors.lightblue
+            
+            bar_drawing.add(bar)
+            
+            # Add title
+            title = String(125, 130, 'Team Workload (Top 5)', textAnchor='middle')
+            title.fontSize = 10
+            title.fontName = 'Helvetica-Bold'
+            bar_drawing.add(title)
+            
+            charts_row.append(bar_drawing)
+        else:
+            charts_row.append("No workload data")
+        
+        # Summary metrics as a mini table
+        summary_data = [
+            ['Metric', 'Value'],
+            ['Total Tasks', str(total_tasks)],
+            ['Total Subtasks', str(total_subtasks)],
+            ['Completed', str(completed_subtasks)],
+            ['Completion Rate', export_data['summary']['completion_rate']],
+            ['Total Comments', str(export_data['summary']['total_comments'])],
+            ['Resolved Comments', str(export_data['summary']['resolved_comments'])]
+        ]
+        
+        summary_table = Table(summary_data, colWidths=[1.2*inch, 0.8*inch])
+        summary_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ]))
+        
+        charts_row.append(summary_table)
+        
+        # Create table with charts
+        charts_table = Table([charts_row], colWidths=[2.5*inch, 3*inch, 2*inch])
+        charts_table.setStyle(TableStyle([
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ]))
+        
+        story.append(charts_table)
+        story.append(Spacer(1, 20))
+        
+        # Team Workload Section
+        story.append(Paragraph("👥 Team Workload Analysis", heading_style))
+        
+        workload_data = [['Team Member', 'Total Subtasks', 'Completed', 'Completion Rate']]
+        
+        for user, workload in export_data['team_workload'].items():
+            completion_rate = (workload['completed'] / workload['total'] * 100) if workload['total'] > 0 else 0
+            
+            workload_data.append([
+                user,
+                str(workload['total']),
+                str(workload['completed']),
+                f"{completion_rate:.1f}%"
+            ])
+        
+        workload_table = Table(workload_data, colWidths=[2.5*inch, 1.5*inch, 1.5*inch, 1.5*inch])
+        workload_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ]))
+        
+        story.append(workload_table)
+        story.append(Spacer(1, 15))
+        
+        # Comments Activity
+        story.append(Paragraph("💬 Comments Activity Analysis", heading_style))
+        
+        comments_data = [['User', 'Total', 'Resolved', 'Res. Rate', 'Mentions Given', 'Mentions Recv.', 'Admin', 'Partner', 'User']]
+        
+        for user, activity in export_data['comments_activity'].items():
+            resolution_rate = (activity['resolved'] / activity['total'] * 100) if activity['total'] > 0 else 0
+            comments_data.append([
+                user,
+                str(activity['total']),
+                str(activity['resolved']),
+                f"{resolution_rate:.0f}%",
+                str(activity['mentions_given']),
+                str(activity['mentions_received']),
+                str(activity['as_admin']),
+                str(activity['as_partner']),
+                str(activity['as_user'])
+            ])
+        
+        comments_table = Table(comments_data, colWidths=[1.3*inch, 0.7*inch, 0.8*inch, 0.8*inch, 1*inch, 1*inch, 0.7*inch, 0.8*inch, 0.7*inch])
+        comments_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ]))
+        
+        story.append(comments_table)
+        story.append(Spacer(1, 20))
+        
+        # Add Gantt Chart representation if we have task data
+        if problem_file.get('tasks'):
+            story.append(PageBreak())  # New page for Gantt
+            story.append(Paragraph("📅 Project Timeline Overview", heading_style))
+            
+            # Create a simplified Gantt chart table
+            gantt_data = [['Task', 'Assigned To', 'Start Date', 'End Date', 'Progress', 'Status']]
+            
+            for task_id, task in problem_file.get('tasks', {}).items():
+                for subtask_id, subtask in task.get('subtasks', {}).items():
+                    # Determine status
+                    if subtask['progress'] == 100:
+                        status = 'Complete ✓'
+                    elif subtask['progress'] > 0:
+                        status = f"In Progress ({subtask['progress']}%)"
+                    elif subtask['projected_end_date'].date() < datetime.now().date():
+                        status = 'Overdue ⚠️'
+                    else:
+                        status = 'Not Started'
+                    
+                    gantt_data.append([
+                        f"{task['name']} - {subtask['name']}"[:30] + "..." if len(f"{task['name']} - {subtask['name']}") > 30 else f"{task['name']} - {subtask['name']}",
+                        subtask['assigned_to'],
+                        subtask['start_date'].strftime('%m/%d/%Y'),
+                        subtask['projected_end_date'].strftime('%m/%d/%Y'),
+                        f"{subtask['progress']}%",
+                        status
+                    ])
+            
+            gantt_table = Table(gantt_data, colWidths=[3*inch, 1.5*inch, 1*inch, 1*inch, 0.8*inch, 1.5*inch])
+            gantt_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ]))
+            
+            story.append(gantt_table)
+        
+        # Footer
+        footer_style = ParagraphStyle(
+            'Footer',
+            parent=styles['Normal'],
+            fontSize=8,
+            alignment=1,  # Center
+            textColor=colors.grey
+        )
+        
+        story.append(Spacer(1, 30))
+        story.append(Paragraph(f"Generated by Problem File Tracker • {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", footer_style))
+        
+        # Build PDF
+        doc.build(story)
+        
+        # Return PDF buffer
+        buffer.seek(0)
+        return buffer.getvalue()
         
     except Exception as e:
-        print(f"[UNRESOLVE ERROR] Failed to unresolve comment {comment_id}: {e}")
-        return False
+        st.error(f"Error generating PDF: {str(e)}")
+        return None
 
-# ============================================================================
-# MAIN COMMENTS SECTION
-# ============================================================================
-
-def show_comments_section(entity_type: str, entity_id: str, entity_name: str):
-    """Display comments section with resolution functionality"""
-    st.markdown(f"### 💬 Comments for {entity_name}")
+def show_file_analytics(problem_file):
+    """Display enhanced file analytics tab with actual PDF export"""
+    st.subheader("📊 Project Analytics")
     
-    # Get file owner and name from database
-    file_owner, file_name = get_file_owner_from_entity(entity_type, entity_id)
+    # PDF Export button at the top
+    col1, col2 = st.columns([3, 1])
+    with col2:
+        if st.button("📄 Export PDF Report", use_container_width=True):
+            with st.spinner("Generating PDF report..."):
+                pdf_data = generate_pdf_report(problem_file)
+                if pdf_data:
+                    # Create filename with project name and date
+                    project_name = problem_file.get('problem_name', 'project').replace(' ', '_')
+                    current_date = datetime.now().strftime('%Y-%m-%d')
+                    filename = f"{project_name} - {current_date}.pdf"
+                    
+                    # Encode PDF for download
+                    b64 = base64.b64encode(pdf_data).decode()
+                    href = f'<a href="data:application/pdf;base64,{b64}" download="{filename}">📄 Download PDF Report</a>'
+                    st.markdown(href, unsafe_allow_html=True)
+                    st.success(f"📊 PDF Report generated successfully! Click the link above to download '{filename}'")
+                else:
+                    st.error("Failed to generate PDF report. Please try again.")
     
-    if not file_owner:
-        st.error("❌ Could not determine file owner for notifications")
+    if not problem_file.get('tasks'):
+        st.info("No tasks available for analytics.")
         return
     
-    # Debug panel for troubleshooting
-    if st.secrets.get("debug_mode", False):
-        show_debug_panel(entity_type, entity_id, file_owner, file_name, entity_name)
+    # Collect analytics data
+    user_workload = {}
+    progress_data = []
+    status_data = {'Completed': 0, 'In Progress': 0, 'Not Started': 0, 'Overdue': 0}
     
-    # Check email notification conditions
-    can_notify = check_notification_conditions(file_owner)
+    for task in problem_file.get('tasks', {}).values():
+        for subtask in task.get('subtasks', {}).values():
+            # User workload
+            user = subtask['assigned_to']
+            if user not in user_workload:
+                user_workload[user] = {'total': 0, 'completed': 0, 'overdue': 0}
+            user_workload[user]['total'] += 1
+            
+            # Progress tracking
+            progress_data.append(subtask['progress'])
+            
+            # Status tracking
+            if subtask['progress'] == 100:
+                status_data['Completed'] += 1
+                user_workload[user]['completed'] += 1
+            elif subtask['progress'] > 0:
+                status_data['In Progress'] += 1
+            else:
+                status_data['Not Started'] += 1
+            
+            # Check if overdue
+            if (subtask['projected_end_date'].date() < datetime.now().date() and 
+                subtask['progress'] < 100):
+                status_data['Overdue'] += 1
+                user_workload[user]['overdue'] += 1
     
-    # Get existing comments from database
-    entity_comments = get_entity_comments_from_db(entity_type, entity_id)
+    # Display charts
+    col1, col2 = st.columns(2)
     
-    # Show comment statistics
-    if entity_comments:
-        total_comments = len(entity_comments)
-        resolved_comments = len([c for c in entity_comments.values() if c.get('resolved', False)])
-        unresolved_comments = total_comments - resolved_comments
+    with col1:
+        # Progress distribution
+        if progress_data:
+            fig_progress = px.histogram(
+                x=progress_data,
+                nbins=10,
+                title="Progress Distribution",
+                labels={'x': 'Progress (%)', 'y': 'Number of Subtasks'}
+            )
+            st.plotly_chart(fig_progress, use_container_width=True)
+    
+    with col2:
+        # Status pie chart
+        fig_status = px.pie(
+            values=list(status_data.values()),
+            names=list(status_data.keys()),
+            title="Task Status Distribution"
+        )
+        st.plotly_chart(fig_status, use_container_width=True)
+    
+    # User workload analysis
+    if user_workload:
+        st.subheader("👥 Team Workload Analysis")
         
-        col1, col2, col3 = st.columns(3)
+        workload_data = []
+        for user, data in user_workload.items():
+            completion_rate = (data['completed'] / data['total'] * 100) if data['total'] > 0 else 0
+            workload_data.append({
+                'User': user,
+                'Total Tasks': data['total'],
+                'Completed': data['completed'],
+                'Overdue': data['overdue'],
+                'Completion Rate': f"{completion_rate:.1f}%"
+            })
+        
+        df_workload = pd.DataFrame(workload_data)
+        st.dataframe(df_workload, use_container_width=True)
+    
+    # Enhanced Comments activity analysis with resolution tracking
+    st.subheader("💬 Enhanced Comments Activity")
+    
+    file_comments, resolved_comments = analyze_comments_for_file(problem_file)
+    
+    if file_comments:
+        # Summary metrics
+        total_comments = sum(data['total'] for data in file_comments.values())
+        total_mentions = sum(data['mentions_given'] for data in file_comments.values())
+        
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("Total Comments", total_comments)
         with col2:
-            st.metric("Resolved", resolved_comments, delta=None if resolved_comments == 0 else f"{(resolved_comments/total_comments)*100:.0f}%")
+            st.metric("Resolved Comments", resolved_comments)
         with col3:
-            st.metric("Unresolved", unresolved_comments, delta=None if unresolved_comments == 0 else f"{(unresolved_comments/total_comments)*100:.0f}%")
-    
-    # Show comment form
-    show_comment_form(
-        entity_type=entity_type,
-        entity_id=entity_id,
-        entity_name=entity_name,
-        file_owner=file_owner,
-        file_name=file_name,
-        can_notify=can_notify
-    )
-    
-    # Display existing comments
-    if entity_comments:
-        st.markdown("---")
+            st.metric("Resolution Rate", f"{(resolved_comments/total_comments*100):.1f}%" if total_comments > 0 else "0%")
+        with col4:
+            st.metric("Total @Mentions", total_mentions)
         
-        # Filter options
-        filter_col1, filter_col2 = st.columns(2)
-        with filter_col1:
-            show_resolved = st.selectbox(
-                "Filter comments:",
-                ["All Comments", "Unresolved Only", "Resolved Only"],
-                key=f"filter_{entity_type}_{entity_id}"
-            )
+        # Detailed comments table
+        comments_data = []
+        for user, data in file_comments.items():
+            resolution_rate = (data['resolved'] / data['total'] * 100) if data['total'] > 0 else 0
+            comments_data.append({
+                'User': user,
+                'Total Comments': data['total'],
+                'Resolved': data['resolved'],
+                'Resolution Rate': f"{resolution_rate:.1f}%",
+                'Mentions Given': data['mentions_given'],
+                'Mentions Received': data['mentions_received'],
+                'As Admin': data['as_admin'],
+                'As Partner': data['as_partner'],
+                'As User': data['as_user']
+            })
         
-        with filter_col2:
-            sort_order = st.selectbox(
-                "Sort by:",
-                ["Newest First", "Oldest First"],
-                key=f"sort_{entity_type}_{entity_id}"
-            )
+        df_comments = pd.DataFrame(comments_data)
+        st.dataframe(df_comments, use_container_width=True)
         
-        # Filter comments based on selection
-        filtered_comments = entity_comments
-        if show_resolved == "Unresolved Only":
-            filtered_comments = {k: v for k, v in entity_comments.items() if not v.get('resolved', False)}
-        elif show_resolved == "Resolved Only":
-            filtered_comments = {k: v for k, v in entity_comments.items() if v.get('resolved', False)}
-        
-        if filtered_comments:
-            st.markdown("#### Comments")
-            display_comments_list(
-                entity_comments=filtered_comments,
-                entity_type=entity_type,
-                entity_id=entity_id,
-                file_owner=file_owner,
-                file_name=file_name,
-                entity_name=entity_name,
-                sort_newest_first=(sort_order == "Newest First")
-            )
-        else:
-            st.info(f"💭 No {show_resolved.lower()} found.")
-    else:
-        st.info("💭 No comments yet. Be the first to comment!")
-
-# ============================================================================
-# HELPER FUNCTIONS
-# ============================================================================
-
-def check_notification_conditions(file_owner: str) -> bool:
-    """Check if email notifications should be sent"""
-    if not file_owner:
-        print(f"[NOTIFICATION] No file owner provided")
-        return False
-    
-    is_other_file = file_owner != st.session_state.current_user
-    if not is_other_file:
-        print(f"[NOTIFICATION] User commenting on own file, no notification needed")
-        return False
-    
-    owner_email = get_user_email(file_owner)
-    has_email = owner_email is not None
-    
-    print(f"[NOTIFICATION] Owner: {file_owner}, Email: {owner_email}, Can notify: {is_other_file and has_email}")
-    return is_other_file and has_email
-
-def can_resolve_comment(comment: dict, file_owner: str) -> bool:
-    """Check if current user can resolve a comment"""
-    # File owners, admins, and partners can resolve any comment
-    # Comment authors can resolve their own comments
-    user_name = comment.get('user_name', '')
-    return (
-        st.session_state.user_role in ['Admin', 'Partner'] or
-        file_owner == st.session_state.current_user or
-        user_name == st.session_state.current_user
-    )
-
-# ============================================================================
-# COMMENT FORM
-# ============================================================================
-
-def show_comment_form(entity_type: str, entity_id: str, entity_name: str,
-                     file_owner: str, file_name: str, can_notify: bool):
-    """Display the add comment form"""
-    
-    with st.expander("➕ Add New Comment", expanded=False):
-        # Show notification status
-        if can_notify:
-            owner_email = get_user_email(file_owner)
-            st.success(f"📧 Your comment will notify **{file_owner}** at {owner_email}")
-        elif file_owner and file_owner != st.session_state.current_user:
-            st.warning(f"⚠️ {file_owner} has no email configured - no notification will be sent")
-        elif file_owner == st.session_state.current_user:
-            st.info("ℹ️ You're commenting on your own file - no email notification needed")
-        
-        # Comment form
-        with st.form(f"comment_form_{entity_type}_{entity_id}", clear_on_submit=True):
-            comment_text = st.text_area(
-                "Write your comment:",
-                placeholder="Share your thoughts, ask questions, or report issues...",
-                key=f"comment_input_{entity_type}_{entity_id}",
-                height=100
-            )
+        # Comments resolution chart
+        if resolved_comments > 0:
+            col1, col2 = st.columns(2)
             
-            submitted = st.form_submit_button("💬 Post Comment", use_container_width=True)
-            
-            if submitted:
-                if comment_text and comment_text.strip():
-                    handle_comment_submission(
-                        comment_text=comment_text.strip(),
-                        entity_type=entity_type,
-                        entity_id=entity_id,
-                        entity_name=entity_name,
-                        file_owner=file_owner,
-                        file_name=file_name,
-                        can_notify=can_notify,
-                        is_reply=False,
-                        parent_id=None
-                    )
-                else:
-                    st.error("⚠️ Please enter a comment before posting.")
-
-def handle_comment_submission(comment_text: str, entity_type: str, entity_id: str,
-                             entity_name: str, file_owner: str, file_name: str,
-                             can_notify: bool, is_reply: bool, parent_id: str = None):
-    """Handle comment submission with email notification"""
-    
-    print(f"[COMMENT_SUBMIT] Handling comment submission")
-    print(f"[COMMENT_SUBMIT] Entity: {entity_type}/{entity_id}")
-    print(f"[COMMENT_SUBMIT] File Owner: {file_owner}")
-    print(f"[COMMENT_SUBMIT] Can Notify: {can_notify}")
-    
-    # Create comment data
-    comment_id = str(uuid.uuid4())
-    current_time = datetime.now()
-    
-    comment_data = {
-        'entity_type': entity_type,
-        'entity_id': entity_id,
-        'user_name': st.session_state.current_user,
-        'text': comment_text,
-        'created_at': current_time.isoformat(),
-        'parent_id': parent_id,
-        'user_role': st.session_state.user_role,
-        'resolved': False,  # New comments start unresolved
-        'resolved_by': None,
-        'resolved_at': None
-    }
-    
-    print(f"[COMMENT_SUBMIT] Created timestamp: {current_time.isoformat()}")
-    
-    # Save comment to database
-    if save_comment(comment_id, comment_data):
-        print(f"[COMMENT_SUBMIT] Comment saved successfully: {comment_id}")
-        
-        # Send email notification if conditions are met
-        email_sent = False
-        if can_notify and file_owner and file_name:
-            print(f"[COMMENT_SUBMIT] Attempting to send email notification")
-            email_sent = send_email_notification(
-                file_owner=file_owner,
-                commenter=st.session_state.current_user,
-                file_name=file_name,
-                entity_name=entity_name,
-                comment_text=comment_text,
-                is_reply=is_reply
-            )
-        else:
-            print(f"[COMMENT_SUBMIT] Email notification skipped - conditions not met")
-        
-        # Show success message
-        if email_sent:
-            st.success(f"✅ {'Reply' if is_reply else 'Comment'} posted and {file_owner} notified via email!")
-        else:
-            st.success(f"✅ {'Reply' if is_reply else 'Comment'} posted successfully!")
-        
-        # Clear reply state if this was a reply
-        if is_reply and parent_id:
-            if f"replying_to_{parent_id}" in st.session_state:
-                del st.session_state[f"replying_to_{parent_id}"]
-        
-        st.rerun()
-    else:
-        st.error("❌ Failed to save comment. Please try again.")
-        print(f"[COMMENT_SUBMIT] Failed to save comment")
-
-def send_email_notification(file_owner: str, commenter: str, file_name: str,
-                           entity_name: str, comment_text: str, is_reply: bool) -> bool:
-    """Send email notification for comment"""
-    try:
-        print(f"[EMAIL_NOTIFY] Preparing notification for {file_owner}")
-        
-        owner_email = get_user_email(file_owner)
-        if not owner_email:
-            print(f"[EMAIL_NOTIFY] No email found for {file_owner}")
-            return False
-        
-        print(f"[EMAIL_NOTIFY] Found email for {file_owner}: {owner_email}")
-        
-        task_name = f"Reply in {entity_name}" if is_reply else entity_name
-        
-        send_partner_comment_notification(
-            file_owner=file_owner,
-            partner_name=commenter,
-            file_name=file_name,
-            task_name=task_name,
-            comment_text=comment_text
-        )
-        
-        print(f"[EMAIL_NOTIFY] Email notification sent successfully")
-        return True
-        
-    except Exception as e:
-        print(f"[EMAIL_NOTIFY ERROR] {str(e)}")
-        st.error(f"Email error: {str(e)}")
-        return False
-
-# ============================================================================
-# COMMENT DISPLAY WITH RESOLUTION
-# ============================================================================
-
-def display_comments_list(entity_comments: dict, entity_type: str, entity_id: str,
-                         file_owner: str, file_name: str, entity_name: str, sort_newest_first: bool = True):
-    """Display list of comments with resolution functionality"""
-    
-    # Get root comments (no parent)
-    root_comments = {
-        cid: comment for cid, comment in entity_comments.items()
-        if not comment.get('parent_id')
-    }
-    
-    # Sort comments
-    sorted_comments = sorted(
-        root_comments.items(),
-        key=lambda x: parse_timestamp(x[1].get('created_at')),
-        reverse=sort_newest_first
-    )
-    
-    # Display each comment thread
-    for comment_id, comment in sorted_comments:
-        display_comment_with_replies(
-            comment_id=comment_id,
-            comment=comment,
-            all_comments=entity_comments,
-            entity_type=entity_type,
-            entity_id=entity_id,
-            file_owner=file_owner,
-            file_name=file_name,
-            entity_name=entity_name,
-            depth=0
-        )
-
-def display_comment_with_replies(comment_id: str, comment: dict, all_comments: dict,
-                                entity_type: str, entity_id: str, file_owner: str,
-                                file_name: str, entity_name: str, depth: int):
-    """Display a single comment with resolution status and its replies"""
-    
-    # Create indentation for nested comments
-    if depth > 0:
-        cols = st.columns([depth * 0.05, 1])
-        container = cols[1]
-    else:
-        container = st.container()
-    
-    with container:
-        # Determine border color based on resolution status
-        is_resolved = comment.get('resolved', False)
-        border_color = "rgba(76, 175, 80, 0.3)" if is_resolved else None
-        
-        # Comment container with conditional styling
-        if is_resolved:
-            comment_container = st.container()
-            comment_container.markdown(
-                """
-                <div style="border: 2px solid #4CAF50; border-radius: 8px; padding: 10px; margin: 5px 0; background-color: rgba(76, 175, 80, 0.1);">
-                """,
-                unsafe_allow_html=True
-            )
-        else:
-            comment_container = st.container(border=True)
-        
-        with comment_container:
-            # Header row
-            col1, col2, col3, col4 = st.columns([0.1, 4, 1, 0.5])
-            
-            # Role badge
             with col1:
-                role_badge = get_role_badge(comment.get('user_role', 'User'))
-                st.write(role_badge)
-            
-            # Comment content
-            with col2:
-                user_name = comment.get('user_name') or comment.get('user', 'Unknown')
-                timestamp = format_timestamp(comment.get('created_at'))
-                st.markdown(f"**{user_name}** · {timestamp}")
-                
-                # Comment text
-                comment_text = comment['text']
-                if is_resolved:
-                    st.markdown(f"~~{comment_text}~~")  # Strikethrough for resolved
-                else:
-                    st.write(comment_text)
-                
-                # Reply button
-                if st.button("↩️ Reply", key=f"reply_{comment_id}", use_container_width=False):
-                    st.session_state[f"replying_to_{comment_id}"] = True
-            
-            # Resolution controls
-            with col3:
-                if is_resolved:
-                    st.success("✅ Resolved")
-                    resolved_by = comment.get('resolved_by', 'Unknown')
-                    resolved_at = format_timestamp(comment.get('resolved_at'))
-                    st.caption(f"by {resolved_by}")
-                    st.caption(f"on {resolved_at}")
-                    
-                    # Unresolve button
-                    if can_resolve_comment(comment, file_owner):
-                        if st.button("🔄 Unresolve", key=f"unresolve_{comment_id}", 
-                                   help="Mark as unresolved"):
-                            if unresolve_comment(comment_id):
-                                st.success("Comment marked as unresolved!")
-                                st.rerun()
-                else:
-                    st.warning("❓ Unresolved")
-                    
-                    # Resolve button
-                    if can_resolve_comment(comment, file_owner):
-                        if st.button("✅ Resolve", key=f"resolve_{comment_id}", 
-                                   help="Mark as resolved"):
-                            if resolve_comment(comment_id):
-                                st.success("Comment resolved!")
-                                st.rerun()
-            
-            # Delete button
-            with col4:
-                if can_delete_comment(comment):
-                    if st.button("🗑️", key=f"delete_{comment_id}", help="Delete comment"):
-                        delete_comment_handler(comment_id)
-            
-            # Reply form (if replying)
-            if st.session_state.get(f"replying_to_{comment_id}", False):
-                show_reply_form(
-                    parent_id=comment_id,
-                    entity_type=entity_type,
-                    entity_id=entity_id,
-                    entity_name=entity_name,
-                    file_owner=file_owner,
-                    file_name=file_name
-                )
-        
-        # Close the custom styled div for resolved comments
-        if is_resolved:
-            st.markdown("</div>", unsafe_allow_html=True)
-        
-        # Display replies
-        replies = get_replies(comment_id, all_comments)
-        for reply_id, reply in replies:
-            display_comment_with_replies(
-                comment_id=reply_id,
-                comment=reply,
-                all_comments=all_comments,
-                entity_type=entity_type,
-                entity_id=entity_id,
-                file_owner=file_owner,
-                file_name=file_name,
-                entity_name=entity_name,
-                depth=depth + 1
-            )
-
-def show_reply_form(parent_id: str, entity_type: str, entity_id: str,
-                   entity_name: str, file_owner: str, file_name: str):
-    """Show reply form for a comment"""
-    
-    can_notify = check_notification_conditions(file_owner)
-    
-    with st.form(f"reply_form_{parent_id}", clear_on_submit=True):
-        if can_notify:
-            st.info(f"📧 Your reply will notify {file_owner}")
-        
-        reply_text = st.text_area(
-            "Write your reply:", 
-            key=f"reply_input_{parent_id}",
-            placeholder="Your reply...",
-            height=80
-        )
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.form_submit_button("Post Reply", use_container_width=True):
-                if reply_text and reply_text.strip():
-                    handle_comment_submission(
-                        comment_text=reply_text.strip(),
-                        entity_type=entity_type,
-                        entity_id=entity_id,
-                        entity_name=entity_name,
-                        file_owner=file_owner,
-                        file_name=file_name,
-                        can_notify=can_notify,
-                        is_reply=True,
-                        parent_id=parent_id
+                # Resolution rate by user
+                resolution_data = [(user, data['resolved']) for user, data in file_comments.items() if data['resolved'] > 0]
+                if resolution_data:
+                    users, resolved_counts = zip(*resolution_data)
+                    fig_resolution = px.bar(
+                        x=list(users),
+                        y=list(resolved_counts),
+                        title="Resolved Comments by User",
+                        labels={'x': 'User', 'y': 'Resolved Comments'}
                     )
-                else:
-                    st.error("Please enter a reply.")
-        
-        with col2:
-            if st.form_submit_button("Cancel", use_container_width=True):
-                del st.session_state[f"replying_to_{parent_id}"]
-                st.rerun()
-
-# ============================================================================
-# UTILITY FUNCTIONS
-# ============================================================================
-
-def get_role_badge(role: str) -> str:
-    """Get emoji badge for user role"""
-    badges = {
-        'Admin': '👑',
-        'Partner': '🤝',
-        'User': '👤'
-    }
-    return badges.get(role, '👤')
-
-def parse_timestamp(timestamp):
-    """Parse timestamp for sorting"""
-    if not timestamp:
-        return datetime.min
-    
-    if isinstance(timestamp, str):
-        try:
-            return datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-        except:
-            try:
-                return datetime.fromisoformat(timestamp)
-            except:
-                return datetime.min
-    
-    if isinstance(timestamp, datetime):
-        return timestamp
-    
-    return datetime.min
-
-def format_timestamp(timestamp) -> str:
-    """Format timestamp for display"""
-    if not timestamp:
-        return "Unknown time"
-    
-    if isinstance(timestamp, str):
-        try:
-            timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-        except:
-            return "Unknown time"
-    
-    if isinstance(timestamp, datetime):
-        return timestamp.strftime('%Y-%m-%d %H:%M')
-    
-    return "Unknown time"
-
-def can_delete_comment(comment: dict) -> bool:
-    """Check if current user can delete a comment"""
-    user_name = comment.get('user_name') or comment.get('user', '')
-    return (
-        user_name == st.session_state.current_user or
-        st.session_state.user_role in ['Admin', 'Partner']
-    )
-
-def delete_comment_handler(comment_id: str):
-    """Handle comment deletion"""
-    if delete_comment(comment_id):
-        st.success("Comment deleted!")
-        st.rerun()
-    else:
-        st.error("Failed to delete comment.")
-
-def get_replies(parent_id: str, all_comments: dict) -> list:
-    """Get all replies to a comment, sorted by date"""
-    replies = [
-        (cid, comment) for cid, comment in all_comments.items()
-        if comment.get('parent_id') == parent_id
-    ]
-    
-    return sorted(
-        replies,
-        key=lambda x: parse_timestamp(x[1].get('created_at'))
-    )
-
-# ============================================================================
-# DEBUG FUNCTIONS (OPTIONAL)
-# ============================================================================
-
-def show_debug_panel(entity_type: str, entity_id: str, file_owner: str, file_name: str, entity_name: str):
-    """Show debug information panel"""
-    with st.expander("🔍 Debug Information", expanded=False):
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.markdown("**Entity Info:**")
-            st.code(f"Type: {entity_type}")
-            st.code(f"ID: {entity_id}")
-            st.code(f"Name: {entity_name}")
-        
-        with col2:
-            st.markdown("**File Context:**")
-            st.code(f"Owner: {file_owner}")
-            st.code(f"File: {file_name}")
-        
-        with col3:
-            st.markdown("**Current User:**")
-            st.code(f"User: {st.session_state.current_user}")
-            st.code(f"Role: {st.session_state.user_role}")
+                    st.plotly_chart(fig_resolution, use_container_width=True)
             
-            is_different = file_owner != st.session_state.current_user if file_owner else False
-            st.code(f"Different User: {is_different}")
-            
-            owner_email = get_user_email(file_owner) if file_owner else None
-            st.code(f"Owner Email: {owner_email or 'None'}")
+            with col2:
+                # Mentions network
+                mention_data = [(user, data['mentions_given'], data['mentions_received']) 
+                              for user, data in file_comments.items()]
+                if mention_data:
+                    users, given, received = zip(*mention_data)
+                    fig_mentions = go.Figure()
+                    fig_mentions.add_trace(go.Bar(name='Given', x=list(users), y=list(given)))
+                    fig_mentions.add_trace(go.Bar(name='Received', x=list(users), y=list(received)))
+                    fig_mentions.update_layout(title="@Mentions Given vs Received", barmode='group')
+                    st
