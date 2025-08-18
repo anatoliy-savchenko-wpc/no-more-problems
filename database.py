@@ -138,6 +138,11 @@ def load_comments():
             else:
                 created_at = datetime.now()
             
+            # Parse resolved_at date safely if present
+            resolved_at = comment.get('resolved_at')
+            if resolved_at:
+                resolved_at = safe_parse_date(resolved_at)
+            
             comments[comment_id] = {
                 'entity_type': comment.get('entity_type', ''),
                 'entity_id': comment.get('entity_id', ''),
@@ -145,7 +150,10 @@ def load_comments():
                 'text': comment.get('text', ''),
                 'created_at': created_at,
                 'parent_id': comment.get('parent_id'),
-                'user_role': comment.get('user_role', 'User')
+                'user_role': comment.get('user_role', 'User'),
+                'resolved': comment.get('resolved', False),
+                'resolved_by': comment.get('resolved_by', ''),
+                'resolved_at': resolved_at
             }
         
         st.session_state.data['comments'] = comments
