@@ -1,6 +1,39 @@
+# Core Streamlit and Data Processing
 streamlit>=1.28.0
 pandas>=2.0.0
-plotly>=5.14.0
+numpy>=1.24.0
+
+# Database and Backend Services
 supabase>=2.0.0
+
+# Configuration and Email Services
 toml>=0.10.2
 sendgrid>=6.9.0
+
+# Visualization Libraries
+plotly>=5.14.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# PDF Generation
+reportlab>=4.0.0
+
+# Date and Time Handling
+python-dateutil>=2.8.0
+
+# File I/O and Data Formats
+openpyxl>=3.1.0
+xlsxwriter>=3.1.0
+
+# Additional Utilities
+requests>=2.31.0
+pillow>=10.0.0
+
+# Optional: Enhanced PDF features
+# Uncomment if you need advanced PDF features
+# weasyprint>=60.0
+# pdfkit>=1.0.0
+
+# Development and Testing (optional)
+# pytest>=7.4.0
+# pytest-streamlit>=1.0.0

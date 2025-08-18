@@ -1,5 +1,5 @@
 """
-Enhanced Visualization components with resolved comments tracking and PDF export
+Enhanced Visualization components with actual PDF export functionality
 """
 import streamlit as st
 import pandas as pd
@@ -10,6 +10,17 @@ import base64
 from io import BytesIO
 import plotly.io as pio
 import re
+
+# PDF generation imports
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
+from reportlab.lib.units import inch
+from reportlab.graphics.shapes import Drawing, Rect
+from reportlab.graphics.charts.barcharts import VerticalBarChart
+from reportlab.graphics.charts.piecharts import Pie
+from reportlab.graphics import renderPDF
 
 def create_gantt_chart(problem_file):
     """Create enhanced Gantt chart with boundaries and visual improvements"""
@@ -322,171 +333,236 @@ def create_pdf_export_data(problem_file):
         st.error(f"Error creating export data: {e}")
         return None
 
+def create_progress_bar_drawing(width, height, progress_percent, fill_color=colors.green):
+    """Create a progress bar drawing for PDF"""
+    drawing = Drawing(width, height)
+    
+    # Background bar
+    drawing.add(Rect(0, 0, width, height, fillColor=colors.lightgrey, strokeColor=colors.grey))
+    
+    # Progress fill
+    fill_width = width * (progress_percent / 100)
+    if fill_width > 0:
+        drawing.add(Rect(0, 0, fill_width, height, fillColor=fill_color, strokeColor=None))
+    
+    return drawing
+
 def generate_pdf_report(problem_file):
-    """Generate HTML report that can be converted to PDF"""
-    export_data = create_pdf_export_data(problem_file)
-    if not export_data:
+    """Generate actual PDF report"""
+    try:
+        export_data = create_pdf_export_data(problem_file)
+        if not export_data:
+            return None
+        
+        # Create PDF buffer
+        buffer = BytesIO()
+        
+        # Create PDF document
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=A4,
+            rightMargin=72,
+            leftMargin=72,
+            topMargin=72,
+            bottomMargin=18
+        )
+        
+        # Define styles
+        styles = getSampleStyleSheet()
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=24,
+            spaceAfter=30,
+            alignment=1,  # Center alignment
+            textColor=colors.darkblue
+        )
+        
+        heading_style = ParagraphStyle(
+            'CustomHeading',
+            parent=styles['Heading2'],
+            fontSize=16,
+            spaceAfter=12,
+            textColor=colors.darkblue,
+            borderWidth=1,
+            borderColor=colors.lightgrey,
+            backColor=colors.lightgrey,
+            leftIndent=6,
+            rightIndent=6,
+            spaceBefore=6,
+            spaceAfter=12
+        )
+        
+        # Build PDF content
+        story = []
+        
+        # Title and header
+        story.append(Paragraph("📊 Project Analytics Report", title_style))
+        story.append(Spacer(1, 12))
+        
+        # Project info table
+        project_info = [
+            ['Project Name:', export_data['project']['name']],
+            ['Owner:', export_data['project']['owner']],
+            ['Project Period:', f"{export_data['project']['start_date']} to {export_data['project']['end_date']}"],
+            ['Report Generated:', datetime.now().strftime('%Y-%m-%d %H:%M')]
+        ]
+        
+        project_table = Table(project_info, colWidths=[2*inch, 4*inch])
+        project_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (0, -1), colors.lightgrey),
+            ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ]))
+        
+        story.append(project_table)
+        story.append(Spacer(1, 20))
+        
+        # Project Summary
+        story.append(Paragraph("📈 Project Summary", heading_style))
+        
+        summary_data = [
+            ['Metric', 'Value'],
+            ['Total Tasks', str(export_data['summary']['total_tasks'])],
+            ['Total Subtasks', str(export_data['summary']['total_subtasks'])],
+            ['Completed Subtasks', str(export_data['summary']['completed_subtasks'])],
+            ['Completion Rate', export_data['summary']['completion_rate']],
+            ['Total Comments', str(export_data['summary']['total_comments'])],
+            ['Resolved Comments', str(export_data['summary']['resolved_comments'])]
+        ]
+        
+        summary_table = Table(summary_data, colWidths=[3*inch, 2*inch])
+        summary_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ]))
+        
+        story.append(summary_table)
+        story.append(Spacer(1, 20))
+        
+        # Team Workload
+        story.append(Paragraph("👥 Team Workload", heading_style))
+        
+        workload_data = [['Team Member', 'Total Subtasks', 'Completed', 'Completion Rate', 'Progress']]
+        
+        for user, workload in export_data['team_workload'].items():
+            completion_rate = (workload['completed'] / workload['total'] * 100) if workload['total'] > 0 else 0
+            workload_data.append([
+                user,
+                str(workload['total']),
+                str(workload['completed']),
+                f"{completion_rate:.1f}%",
+                ""  # Progress bar will be added as drawing
+            ])
+        
+        workload_table = Table(workload_data, colWidths=[1.5*inch, 1*inch, 1*inch, 1*inch, 1.5*inch])
+        
+        # Add progress bars to the table
+        table_style = [
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ]
+        
+        workload_table.setStyle(TableStyle(table_style))
+        story.append(workload_table)
+        story.append(Spacer(1, 20))
+        
+        # Comments Activity
+        story.append(Paragraph("💬 Comments Activity", heading_style))
+        
+        comments_data = [['User', 'Total', 'Resolved', 'Resolution Rate', 'Mentions Given', 'Mentions Received', 'Admin', 'Partner', 'User']]
+        
+        for user, activity in export_data['comments_activity'].items():
+            resolution_rate = (activity['resolved'] / activity['total'] * 100) if activity['total'] > 0 else 0
+            comments_data.append([
+                user,
+                str(activity['total']),
+                str(activity['resolved']),
+                f"{resolution_rate:.1f}%",
+                str(activity['mentions_given']),
+                str(activity['mentions_received']),
+                str(activity['as_admin']),
+                str(activity['as_partner']),
+                str(activity['as_user'])
+            ])
+        
+        comments_table = Table(comments_data, colWidths=[1*inch, 0.6*inch, 0.6*inch, 0.8*inch, 0.7*inch, 0.7*inch, 0.5*inch, 0.6*inch, 0.5*inch])
+        comments_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ]))
+        
+        story.append(comments_table)
+        story.append(Spacer(1, 20))
+        
+        # Footer
+        footer_style = ParagraphStyle(
+            'Footer',
+            parent=styles['Normal'],
+            fontSize=8,
+            alignment=1,  # Center
+            textColor=colors.grey
+        )
+        
+        story.append(Spacer(1, 30))
+        story.append(Paragraph(f"Generated by Problem File Tracker • {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", footer_style))
+        
+        # Build PDF
+        doc.build(story)
+        
+        # Return PDF buffer
+        buffer.seek(0)
+        return buffer.getvalue()
+        
+    except Exception as e:
+        st.error(f"Error generating PDF: {str(e)}")
         return None
-    
-    html_content = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <title>Project Analytics Report</title>
-        <style>
-            body {{ font-family: Arial, sans-serif; margin: 20px; line-height: 1.6; }}
-            .header {{ background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px; }}
-            .section {{ margin-bottom: 30px; }}
-            .metrics {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }}
-            .metric-card {{ background-color: #e9ecef; padding: 15px; border-radius: 5px; text-align: center; }}
-            .metric-value {{ font-size: 24px; font-weight: bold; color: #007bff; }}
-            .metric-label {{ font-size: 14px; color: #666; }}
-            table {{ width: 100%; border-collapse: collapse; margin: 15px 0; }}
-            th, td {{ border: 1px solid #ddd; padding: 12px; text-align: left; }}
-            th {{ background-color: #f8f9fa; font-weight: bold; }}
-            .progress-bar {{ background-color: #e9ecef; height: 20px; border-radius: 10px; overflow: hidden; }}
-            .progress-fill {{ background-color: #28a745; height: 100%; }}
-            .footer {{ margin-top: 40px; text-align: center; color: #666; font-size: 12px; }}
-        </style>
-    </head>
-    <body>
-        <div class="header">
-            <h1>📊 Project Analytics Report</h1>
-            <h2>{export_data['project']['name']}</h2>
-            <p><strong>Owner:</strong> {export_data['project']['owner']}</p>
-            <p><strong>Project Period:</strong> {export_data['project']['start_date']} to {export_data['project']['end_date']}</p>
-            <p><strong>Report Generated:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>
-        </div>
-
-        <div class="section">
-            <h3>📈 Project Summary</h3>
-            <div class="metrics">
-                <div class="metric-card">
-                    <div class="metric-value">{export_data['summary']['total_tasks']}</div>
-                    <div class="metric-label">Total Tasks</div>
-                </div>
-                <div class="metric-card">
-                    <div class="metric-value">{export_data['summary']['total_subtasks']}</div>
-                    <div class="metric-label">Total Subtasks</div>
-                </div>
-                <div class="metric-card">
-                    <div class="metric-value">{export_data['summary']['completed_subtasks']}</div>
-                    <div class="metric-label">Completed Subtasks</div>
-                </div>
-                <div class="metric-card">
-                    <div class="metric-value">{export_data['summary']['completion_rate']}</div>
-                    <div class="metric-label">Completion Rate</div>
-                </div>
-                <div class="metric-card">
-                    <div class="metric-value">{export_data['summary']['total_comments']}</div>
-                    <div class="metric-label">Total Comments</div>
-                </div>
-                <div class="metric-card">
-                    <div class="metric-value">{export_data['summary']['resolved_comments']}</div>
-                    <div class="metric-label">Resolved Comments</div>
-                </div>
-            </div>
-        </div>
-
-        <div class="section">
-            <h3>👥 Team Workload</h3>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Team Member</th>
-                        <th>Total Subtasks</th>
-                        <th>Completed</th>
-                        <th>Completion Rate</th>
-                        <th>Progress</th>
-                    </tr>
-                </thead>
-                <tbody>
-    """
-    
-    for user, workload in export_data['team_workload'].items():
-        completion_rate = (workload['completed'] / workload['total'] * 100) if workload['total'] > 0 else 0
-        html_content += f"""
-                    <tr>
-                        <td>{user}</td>
-                        <td>{workload['total']}</td>
-                        <td>{workload['completed']}</td>
-                        <td>{completion_rate:.1f}%</td>
-                        <td>
-                            <div class="progress-bar">
-                                <div class="progress-fill" style="width: {completion_rate}%"></div>
-                            </div>
-                        </td>
-                    </tr>
-        """
-    
-    html_content += """
-                </tbody>
-            </table>
-        </div>
-
-        <div class="section">
-            <h3>💬 Comments Activity</h3>
-            <table>
-                <thead>
-                    <tr>
-                        <th>User</th>
-                        <th>Total Comments</th>
-                        <th>Resolved Comments</th>
-                        <th>Mentions Given</th>
-                        <th>Mentions Received</th>
-                        <th>As Admin</th>
-                        <th>As Partner</th>
-                        <th>As User</th>
-                    </tr>
-                </thead>
-                <tbody>
-    """
-    
-    for user, activity in export_data['comments_activity'].items():
-        html_content += f"""
-                    <tr>
-                        <td>{user}</td>
-                        <td>{activity['total']}</td>
-                        <td>{activity['resolved']}</td>
-                        <td>{activity['mentions_given']}</td>
-                        <td>{activity['mentions_received']}</td>
-                        <td>{activity['as_admin']}</td>
-                        <td>{activity['as_partner']}</td>
-                        <td>{activity['as_user']}</td>
-                    </tr>
-        """
-    
-    html_content += f"""
-                </tbody>
-            </table>
-        </div>
-
-        <div class="footer">
-            <p>Generated by Problem File Tracker • {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-        </div>
-    </body>
-    </html>
-    """
-    
-    return html_content
 
 def show_file_analytics(problem_file):
-    """Display enhanced file analytics tab with resolved comments and PDF export"""
+    """Display enhanced file analytics tab with actual PDF export"""
     st.subheader("📊 Project Analytics")
     
     # PDF Export button at the top
     col1, col2 = st.columns([3, 1])
     with col2:
         if st.button("📄 Export PDF Report", use_container_width=True):
-            html_report = generate_pdf_report(problem_file)
-            if html_report:
-                # Encode HTML for download
-                b64 = base64.b64encode(html_report.encode()).decode()
-                href = f'<a href="data:text/html;base64,{b64}" download="project_analytics_{problem_file.get("problem_name", "report")}.html">📄 Download HTML Report</a>'
-                st.markdown(href, unsafe_allow_html=True)
-                st.success("📊 Report generated! Click the link above to download.")
-                st.info("💡 Tip: Open the HTML file in your browser and use 'Print to PDF' for a PDF version.")
+            with st.spinner("Generating PDF report..."):
+                pdf_data = generate_pdf_report(problem_file)
+                if pdf_data:
+                    # Create filename with project name and date
+                    project_name = problem_file.get('problem_name', 'project').replace(' ', '_')
+                    current_date = datetime.now().strftime('%Y-%m-%d')
+                    filename = f"{project_name} - {current_date}.pdf"
+                    
+                    # Encode PDF for download
+                    b64 = base64.b64encode(pdf_data).decode()
+                    href = f'<a href="data:application/pdf;base64,{b64}" download="{filename}">📄 Download PDF Report</a>'
+                    st.markdown(href, unsafe_allow_html=True)
+                    st.success(f"📊 PDF Report generated successfully! Click the link above to download '{filename}'")
+                else:
+                    st.error("Failed to generate PDF report. Please try again.")
     
     if not problem_file.get('tasks'):
         st.info("No tasks available for analytics.")
@@ -630,10 +706,4 @@ def show_file_analytics(problem_file):
                     fig_mentions.add_trace(go.Bar(name='Given', x=list(users), y=list(given)))
                     fig_mentions.add_trace(go.Bar(name='Received', x=list(users), y=list(received)))
                     fig_mentions.update_layout(title="@Mentions Given vs Received", barmode='group')
-                    st.plotly_chart(fig_mentions, use_container_width=True)
-    else:
-        st.info("No comments activity yet for this project.")
-    
-    # Export section
-    st.subheader("📤 Export Options")
-    st.info("💡 Use the 'Export PDF Report' button at the top to generate a comprehensive analytics report!")
+                    st
