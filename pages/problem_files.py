@@ -66,6 +66,19 @@ def show_create_problem_file():
                         st.session_state.data['problem_files'][file_id] = file_data
                         st.success(f"Problem file '{problem_name}' created successfully!")
                         
+                        # Send email notification to the assigned owner
+                        try:
+                            from email_handler import send_new_problem_file_notification
+                            send_new_problem_file_notification(
+                                owner, 
+                                problem_name, 
+                                st.session_state.current_user,
+                                project_start_date.strftime('%Y-%m-%d'),
+                                project_end_date.strftime('%Y-%m-%d')
+                            )
+                        except Exception as e:
+                            st.warning(f"Problem file created but email notification failed: {e}")
+                        
                         # Auto-navigate to the new file
                         st.session_state.selected_file_for_view = file_id
                         st.session_state.page = f"📁 {problem_name}"
