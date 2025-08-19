@@ -23,7 +23,7 @@ def safe_parse_date(date_str):
         return datetime.fromisoformat(date_str)
     return date_str if isinstance(date_str, datetime) else datetime.now()
 
-# Load data functions
+# ====== MAIN LOAD DATA FUNCTION ======
 def load_data():
     """Load all data from Supabase into session state"""
     if not st.session_state.authenticated:
@@ -76,6 +76,7 @@ def load_data():
             file_id = pf['id']
             
             problem_files[file_id] = {
+                'id': file_id,  # Added ID field for analytics
                 'problem_name': pf['problem_name'],
                 'owner': pf['owner'],
                 'project_start_date': safe_parse_date(pf['project_start_date']),
@@ -113,14 +114,17 @@ def load_data():
         
         st.session_state.data['problem_files'] = problem_files
         
-        # Load comments and contacts
+        # Load all related data
         load_comments()
         load_contacts()
+        load_event_logs()
+        load_sharepoint_links()
         
     except Exception as e:
         st.error(f"Error loading data from Supabase: {e}")
         st.session_state.data['problem_files'] = {}
 
+# ====== LOAD INDIVIDUAL DATA TYPES ======
 def load_comments():
     """Load comments from Supabase"""
     try:
@@ -189,7 +193,59 @@ def load_contacts():
         st.error(f"Error loading contacts: {e}")
         st.session_state.data['contacts'] = {}
 
-# Save functions
+def load_event_logs():
+    """Load event logs from Supabase"""
+    try:
+        supabase = init_supabase()
+        events_response = supabase.table('event_logs').select('*').execute()
+        
+        events = {}
+        for event in events_response.data:
+            event_id = event['id']
+            events[event_id] = {
+                'problem_file_id': event['problem_file_id'],
+                'title': event['title'],
+                'description': event['description'],
+                'event_date': safe_parse_date(event['event_date']),
+                'category': event['category'],
+                'created_by': event['created_by'],
+                'created_at': safe_parse_date(event['created_at'])
+            }
+        
+        st.session_state.data['event_logs'] = events
+        
+    except Exception as e:
+        st.error(f"Error loading event logs: {e}")
+        st.session_state.data['event_logs'] = {}
+
+def load_sharepoint_links():
+    """Load SharePoint links from Supabase"""
+    try:
+        supabase = init_supabase()
+        links_response = supabase.table('sharepoint_links').select('*').execute()
+        
+        links = {}
+        for link in links_response.data:
+            link_id = link['id']
+            links[link_id] = {
+                'problem_file_id': link['problem_file_id'],
+                'entity_type': link['entity_type'],
+                'entity_id': link['entity_id'],
+                'url': link['url'],
+                'description': link.get('description', ''),
+                'link_type': link['link_type'],
+                'access_level': link['access_level'],
+                'created_by': link['created_by'],
+                'created_at': safe_parse_date(link['created_at'])
+            }
+        
+        st.session_state.data['sharepoint_links'] = links
+        
+    except Exception as e:
+        st.error(f"Error loading SharePoint links: {e}")
+        st.session_state.data['sharepoint_links'] = {}
+
+# ====== SAVE FUNCTIONS ======
 def save_problem_file(file_id: str, file_data: dict):
     """Save or update a problem file"""
     try:
@@ -268,7 +324,10 @@ def save_comment(comment_id: str, comment_data: dict):
             'user_name': comment_data.get('user_name', ''),
             'text': comment_data.get('text', ''),
             'parent_id': comment_data.get('parent_id'),
-            'user_role': comment_data.get('user_role', 'User')
+            'user_role': comment_data.get('user_role', 'User'),
+            'resolved': comment_data.get('resolved', False),
+            'resolved_by': comment_data.get('resolved_by', ''),
+            'resolved_at': comment_data.get('resolved_at').isoformat() if comment_data.get('resolved_at') else None
         }
         
         supabase.table('comments').upsert(db_data).execute()
@@ -276,7 +335,6 @@ def save_comment(comment_id: str, comment_data: dict):
         
     except Exception as e:
         st.error(f"Error saving comment: {e}")
-        st.error(f"Debug - Comment data: {db_data}")
         return False
 
 def save_contact(contact_id: str, contact_data: dict):
@@ -304,7 +362,55 @@ def save_contact(contact_id: str, contact_data: dict):
         st.error(f"Error saving contact: {e}")
         return False
 
-# Delete functions
+def save_event_log(event_id: str, event_data: dict):
+    """Save an event log entry to Supabase"""
+    try:
+        supabase = init_supabase()
+        
+        db_data = {
+            'id': event_id,
+            'problem_file_id': event_data['problem_file_id'],
+            'title': event_data['title'],
+            'description': event_data['description'],
+            'event_date': event_data['event_date'].isoformat(),
+            'category': event_data['category'],
+            'created_by': event_data['created_by'],
+            'created_at': event_data['created_at'].isoformat()
+        }
+        
+        supabase.table('event_logs').upsert(db_data).execute()
+        return True
+        
+    except Exception as e:
+        st.error(f"Error saving event log: {e}")
+        return False
+
+def save_sharepoint_link(link_id: str, link_data: dict):
+    """Save a SharePoint link to Supabase"""
+    try:
+        supabase = init_supabase()
+        
+        db_data = {
+            'id': link_id,
+            'problem_file_id': link_data['problem_file_id'],
+            'entity_type': link_data['entity_type'],
+            'entity_id': link_data['entity_id'],
+            'url': link_data['url'],
+            'description': link_data.get('description', ''),
+            'link_type': link_data['link_type'],
+            'access_level': link_data['access_level'],
+            'created_by': link_data['created_by'],
+            'created_at': link_data['created_at'].isoformat()
+        }
+        
+        supabase.table('sharepoint_links').upsert(db_data).execute()
+        return True
+        
+    except Exception as e:
+        st.error(f"Error saving SharePoint link: {e}")
+        return False
+
+# ====== DELETE FUNCTIONS ======
 def delete_problem_file(file_id: str):
     """Delete a problem file and all related data"""
     try:
@@ -354,3 +460,97 @@ def delete_contact(contact_id: str):
     except Exception as e:
         st.error(f"Error deleting contact: {e}")
         return False
+
+def delete_event_log(event_id: str):
+    """Delete an event log entry from Supabase"""
+    try:
+        supabase = init_supabase()
+        supabase.table('event_logs').delete().eq('id', event_id).execute()
+        return True
+    except Exception as e:
+        st.error(f"Error deleting event log: {e}")
+        return False
+
+def delete_sharepoint_link(link_id: str):
+    """Delete a SharePoint link from Supabase"""
+    try:
+        supabase = init_supabase()
+        supabase.table('sharepoint_links').delete().eq('id', link_id).execute()
+        return True
+    except Exception as e:
+        st.error(f"Error deleting SharePoint link: {e}")
+        return False
+
+# ====== UTILITY FUNCTIONS ======
+def update_comment_resolution(comment_id: str, resolved: bool, resolved_by: str = None):
+    """Update comment resolution status"""
+    try:
+        supabase = init_supabase()
+        
+        update_data = {
+            'resolved': resolved,
+            'resolved_by': resolved_by if resolved else None,
+            'resolved_at': datetime.now().isoformat() if resolved else None
+        }
+        
+        supabase.table('comments').update(update_data).eq('id', comment_id).execute()
+        
+        # Update session state
+        if comment_id in st.session_state.data.get('comments', {}):
+            st.session_state.data['comments'][comment_id].update({
+                'resolved': resolved,
+                'resolved_by': resolved_by if resolved else '',
+                'resolved_at': datetime.now() if resolved else None
+            })
+        
+        return True
+        
+    except Exception as e:
+        st.error(f"Error updating comment resolution: {e}")
+        return False
+
+def get_user_statistics(user_name: str):
+    """Get comprehensive statistics for a user"""
+    try:
+        # Count owned files
+        owned_files = len([f for f in st.session_state.data.get('problem_files', {}).values() 
+                          if f['owner'] == user_name])
+        
+        # Count assigned subtasks
+        assigned_subtasks = 0
+        completed_subtasks = 0
+        for file_data in st.session_state.data.get('problem_files', {}).values():
+            for task in file_data.get('tasks', {}).values():
+                for subtask in task.get('subtasks', {}).values():
+                    if subtask['assigned_to'] == user_name:
+                        assigned_subtasks += 1
+                        if subtask['progress'] == 100:
+                            completed_subtasks += 1
+        
+        # Count comments
+        user_comments = len([c for c in st.session_state.data.get('comments', {}).values() 
+                           if c['user_name'] == user_name])
+        
+        # Count resolved comments
+        resolved_comments = len([c for c in st.session_state.data.get('comments', {}).values() 
+                               if c['resolved_by'] == user_name])
+        
+        return {
+            'owned_files': owned_files,
+            'assigned_subtasks': assigned_subtasks,
+            'completed_subtasks': completed_subtasks,
+            'completion_rate': (completed_subtasks / assigned_subtasks * 100) if assigned_subtasks > 0 else 0,
+            'user_comments': user_comments,
+            'resolved_comments': resolved_comments
+        }
+        
+    except Exception as e:
+        st.error(f"Error getting user statistics: {e}")
+        return {
+            'owned_files': 0,
+            'assigned_subtasks': 0,
+            'completed_subtasks': 0,
+            'completion_rate': 0,
+            'user_comments': 0,
+            'resolved_comments': 0
+        }

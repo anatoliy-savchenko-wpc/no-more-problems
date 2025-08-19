@@ -13,6 +13,8 @@ from components.tasks import show_task_management
 from components.visualization import show_gantt_chart_tab, show_file_analytics
 from components.contacts import show_contacts_section
 from components.settings import show_file_settings
+from components.event_log import show_event_log_section
+from components.sharepoint_links import show_sharepoint_links_section
 
 def show_create_problem_file():
     """Display create problem file page"""
@@ -59,6 +61,8 @@ def show_create_problem_file():
                     }
                     
                     if save_problem_file(file_id, file_data):
+                        # Add ID field for analytics
+                        file_data['id'] = file_id
                         st.session_state.data['problem_files'][file_id] = file_data
                         st.success(f"Problem file '{problem_name}' created successfully!")
                         
@@ -91,8 +95,8 @@ def show_my_problem_files():
             st.rerun()
         return
     
-    # Summary cards
-    col1, col2, col3, col4 = st.columns(4)
+    # Enhanced summary cards with new data types
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         st.metric("Total Files", len(accessible_files))
     with col2:
@@ -104,25 +108,34 @@ def show_my_problem_files():
     with col4:
         completed = len([f for f in accessible_files.values() if calculate_project_progress(f['tasks']) >= 100])
         st.metric("Completed", completed)
+    with col5:
+        # Count total events across all accessible files
+        total_events = len([e for e in st.session_state.data.get('event_logs', {}).values() 
+                           if e['problem_file_id'] in accessible_files.keys()])
+        st.metric("Total Events", total_events)
     
-    # Files table with actions
-    st.subheader("Problem Files")
+    # Files table with enhanced data
+    st.subheader("Problem Files Overview")
     
     files_data = []
     for file_id, file_data in accessible_files.items():
         progress = calculate_project_progress(file_data['tasks'])
         
-        # Count comments and contacts
-        comments_count = 0
-        for task in file_data['tasks'].values():
-            comments_count += len([c for c in st.session_state.data.get('comments', {}).values() 
-                                 if c['entity_type'] == 'task' and c['entity_id'] in file_data['tasks']])
-            for subtask_id in task['subtasks']:
-                comments_count += len([c for c in st.session_state.data.get('comments', {}).values() 
-                                     if c['entity_type'] == 'subtask' and c['entity_id'] == subtask_id])
+        # Count comments (improved logic for file-level comments)
+        comments_count = len([c for c in st.session_state.data.get('comments', {}).values() 
+                            if c.get('entity_id') == file_id])
         
+        # Count contacts
         contacts_count = len([c for c in st.session_state.data.get('contacts', {}).values() 
                             if c['problem_file_id'] == file_id])
+        
+        # Count events
+        events_count = len([e for e in st.session_state.data.get('event_logs', {}).values() 
+                          if e['problem_file_id'] == file_id])
+        
+        # Count SharePoint links
+        links_count = len([l for l in st.session_state.data.get('sharepoint_links', {}).values() 
+                         if l['problem_file_id'] == file_id])
         
         files_data.append({
             'ID': file_id,
@@ -131,6 +144,8 @@ def show_my_problem_files():
             'Progress': f"{progress:.1f}%",
             'Comments': comments_count,
             'Contacts': contacts_count,
+            'Events': events_count,
+            'SharePoint Links': links_count,
             'Created': file_data.get('created_date', datetime.now()).strftime('%Y-%m-%d'),
             'Last Modified': file_data.get('last_modified', datetime.now()).strftime('%Y-%m-%d %H:%M')
         })
@@ -149,7 +164,7 @@ def show_my_problem_files():
         selected_file_id = file_selector[selected_label]
         selected_file_data = accessible_files[selected_file_id]
 
-        # Action buttons
+        # Enhanced action buttons
         col1, col2, col3, col4 = st.columns(4)
 
         with col1:
@@ -178,6 +193,40 @@ def show_my_problem_files():
                     st.session_state.file_to_delete = selected_file_id
                     st.rerun()
 
+        # Show quick preview of selected file
+        st.subheader(f"📋 Quick Preview: {selected_file_data['problem_name']}")
+        
+        preview_col1, preview_col2 = st.columns(2)
+        
+        with preview_col1:
+            st.write("**Recent Activity:**")
+            # Show recent events for this file
+            file_events = [(e['created_at'], e['title']) for e in st.session_state.data.get('event_logs', {}).values() 
+                          if e['problem_file_id'] == selected_file_id]
+            file_events.sort(reverse=True)
+            
+            if file_events:
+                for event_date, event_title in file_events[:3]:  # Show last 3 events
+                    st.write(f"• {event_title} ({event_date.strftime('%m/%d')})")
+            else:
+                st.write("No recent events")
+        
+        with preview_col2:
+            st.write("**Key Resources:**")
+            # Show SharePoint links count by type
+            file_links = [l for l in st.session_state.data.get('sharepoint_links', {}).values() 
+                         if l['problem_file_id'] == selected_file_id]
+            
+            if file_links:
+                link_types = {}
+                for link in file_links:
+                    link_type = link['link_type']
+                    link_types[link_type] = link_types.get(link_type, 0) + 1
+                
+                for link_type, count in link_types.items():
+                    st.write(f"• {link_type}: {count}")
+            else:
+                st.write("No SharePoint links")
         
         # Handle file deletion confirmation
         if hasattr(st.session_state, 'file_to_delete') and st.session_state.file_to_delete:
@@ -185,7 +234,7 @@ def show_my_problem_files():
             file_name = accessible_files[file_to_delete]['problem_name']
             
             st.error(f"⚠️ **Confirm Deletion of '{file_name}'**")
-            st.warning("This action cannot be undone. All tasks, subtasks, comments, and contacts will be permanently deleted.")
+            st.warning("This action cannot be undone. All tasks, subtasks, comments, contacts, events, and SharePoint links will be permanently deleted.")
             
             col1, col2 = st.columns(2)
             with col1:
@@ -216,8 +265,8 @@ def show_individual_problem_file(file_id):
     # Page header
     st.title(f"📁 {problem_file['problem_name']}")
     
-    # Quick info bar
-    col1, col2, col3, col4, col5 = st.columns(5)
+    # Enhanced quick info bar with new metrics
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
     with col1:
         st.metric("Owner", problem_file['owner'])
     with col2:
@@ -232,6 +281,10 @@ def show_individual_problem_file(file_id):
         contacts_count = len([c for c in st.session_state.data.get('contacts', {}).values() 
                             if c['problem_file_id'] == file_id])
         st.metric("Contacts", contacts_count)
+    with col6:
+        events_count = len([e for e in st.session_state.data.get('event_logs', {}).values() 
+                          if e['problem_file_id'] == file_id])
+        st.metric("Events", events_count)
     
     # Check permissions
     can_edit = can_edit_file(problem_file['owner'])
@@ -243,8 +296,16 @@ def show_individual_problem_file(file_id):
     if can_edit and check_overdue_and_update(problem_file):
         st.warning("Some overdue tasks have been automatically updated with new deadlines.")
     
-    # Navigation tabs
-    tabs = st.tabs(["📋 Tasks & Subtasks", "📊 Gantt Chart", "📇 Contacts", "📝 File Settings", "📈 Analytics"])
+    # Enhanced navigation tabs with new components
+    tabs = st.tabs([
+        "📋 Tasks & Subtasks", 
+        "📊 Gantt Chart", 
+        "📅 Event Log",
+        "🔗 SharePoint Links",
+        "📇 Contacts", 
+        "📝 File Settings", 
+        "📈 Analytics"
+    ])
     
     with tabs[0]:
         show_task_management(file_id, problem_file, can_edit)
@@ -253,10 +314,128 @@ def show_individual_problem_file(file_id):
         show_gantt_chart_tab(problem_file)
     
     with tabs[2]:
-        show_contacts_section(file_id, problem_file)
+        show_event_log_section(file_id, problem_file, can_edit)
     
     with tabs[3]:
-        show_file_settings(file_id, problem_file, can_edit)
+        show_sharepoint_links_section(file_id, problem_file, can_edit)
     
     with tabs[4]:
+        show_contacts_section(file_id, problem_file)
+    
+    with tabs[5]:
+        show_file_settings(file_id, problem_file, can_edit)
+    
+    with tabs[6]:
         show_file_analytics(problem_file)
+
+def show_project_dashboard():
+    """Enhanced dashboard showing overview of all projects with new data types"""
+    st.title("🎯 Project Dashboard")
+    
+    accessible_files = get_accessible_files()
+    
+    if not accessible_files:
+        st.info("No problem files available.")
+        if st.button("➕ Create Your First Problem File"):
+            st.session_state.page = "Create Problem File"
+            st.rerun()
+        return
+    
+    # Enhanced overview metrics
+    st.subheader("📊 Overview Metrics")
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    
+    with col1:
+        st.metric("Total Projects", len(accessible_files))
+    
+    with col2:
+        completed_projects = len([f for f in accessible_files.values() 
+                                if calculate_project_progress(f['tasks']) >= 100])
+        st.metric("Completed Projects", completed_projects)
+    
+    with col3:
+        total_subtasks = sum(sum(len(task['subtasks']) for task in file_data['tasks'].values()) 
+                           for file_data in accessible_files.values())
+        st.metric("Total Subtasks", total_subtasks)
+    
+    with col4:
+        total_events = len([e for e in st.session_state.data.get('event_logs', {}).values() 
+                           if e['problem_file_id'] in accessible_files.keys()])
+        st.metric("Total Events", total_events)
+    
+    with col5:
+        total_links = len([l for l in st.session_state.data.get('sharepoint_links', {}).values() 
+                         if l['problem_file_id'] in accessible_files.keys()])
+        st.metric("SharePoint Links", total_links)
+    
+    with col6:
+        resolved_comments = len([c for c in st.session_state.data.get('comments', {}).values() 
+                               if c.get('resolved', False) and c.get('entity_id') in accessible_files.keys()])
+        st.metric("Resolved Comments", resolved_comments)
+    
+    # Recent activity across all projects
+    st.subheader("🕒 Recent Activity")
+    
+    # Combine recent events and comments
+    recent_activity = []
+    
+    # Add recent events
+    for event in st.session_state.data.get('event_logs', {}).values():
+        if event['problem_file_id'] in accessible_files:
+            project_name = accessible_files[event['problem_file_id']]['problem_name']
+            recent_activity.append({
+                'timestamp': event['created_at'],
+                'type': 'Event',
+                'description': f"📅 {event['title']} in {project_name}",
+                'project': project_name
+            })
+    
+    # Add recent comments
+    for comment in st.session_state.data.get('comments', {}).values():
+        if comment.get('entity_id') in accessible_files:
+            project_name = accessible_files[comment['entity_id']]['problem_name']
+            status = "✅ Resolved" if comment.get('resolved') else "💬 New"
+            recent_activity.append({
+                'timestamp': comment['created_at'],
+                'type': 'Comment',
+                'description': f"{status} comment by {comment['user_name']} in {project_name}",
+                'project': project_name
+            })
+    
+    # Sort by timestamp and show recent items
+    recent_activity.sort(key=lambda x: x['timestamp'], reverse=True)
+    
+    if recent_activity:
+        for activity in recent_activity[:10]:  # Show last 10 activities
+            st.write(f"• {activity['description']} ({activity['timestamp'].strftime('%m/%d %H:%M')})")
+    else:
+        st.write("No recent activity")
+    
+    # Projects at risk (overdue or behind schedule)
+    st.subheader("⚠️ Projects Requiring Attention")
+    
+    projects_at_risk = []
+    for file_id, file_data in accessible_files.items():
+        progress = calculate_project_progress(file_data['tasks'])
+        
+        # Check for overdue subtasks
+        overdue_count = 0
+        for task in file_data['tasks'].values():
+            for subtask in task['subtasks'].values():
+                if (subtask['projected_end_date'].date() < datetime.now().date() and 
+                    subtask['progress'] < 100):
+                    overdue_count += 1
+        
+        if overdue_count > 0 or progress < 50:
+            projects_at_risk.append({
+                'name': file_data['problem_name'],
+                'progress': progress,
+                'overdue_tasks': overdue_count,
+                'owner': file_data['owner']
+            })
+    
+    if projects_at_risk:
+        risk_df = pd.DataFrame(projects_at_risk)
+        st.dataframe(risk_df, use_container_width=True)
+    else:
+        st.success("✅ All projects are on track!")
