@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from database import (save_problem_file, save_task, save_subtask, delete_problem_file, 
                      delete_task, delete_subtask)
 from utils import (get_accessible_files, calculate_project_progress, can_edit_file, 
-                  can_delete_items, check_overdue_and_update)
+                  can_delete_items, check_overdue_and_update, can_edit_specific_file)
 from components.tasks import show_task_management
 from components.visualization import show_gantt_chart_tab, show_file_analytics
 from components.contacts import show_contacts_section
@@ -192,7 +192,7 @@ def show_my_problem_files():
                 st.rerun()
 
         with col3:
-            if can_edit_file(selected_file_data['owner']):
+            if can_edit_specific_file(selected_file_id):
                 if st.button("✏️ Edit", use_container_width=True):
                     st.session_state.selected_file_for_view = selected_file_id
                     st.session_state.page = f"📁 {selected_file_data['problem_name']}"
@@ -300,10 +300,10 @@ def show_individual_problem_file(file_id):
         st.metric("Events", events_count)
     
     # Check permissions
-    can_edit = can_edit_file(problem_file['owner'])
+    can_edit = can_edit_specific_file(file_id)
     
-    if not can_edit and st.session_state.user_role != 'Partner':
-        st.info("👁️ **View Only Mode** - You can view this file but cannot make changes. Contact the owner or a partner for edit access.")
+    if not can_edit:
+        st.info("👁️ **View Only Mode** - You can view this file but cannot make changes. You can edit files you own or are assigned to work on.")
     
     # Check for overdue tasks and update (only if can edit)
     if can_edit and check_overdue_and_update(problem_file):

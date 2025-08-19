@@ -1,5 +1,5 @@
 """
-Database operations module for Supabase integration
+Updated Database operations with universal view access
 """
 import streamlit as st
 from datetime import datetime, timedelta
@@ -23,52 +23,17 @@ def safe_parse_date(date_str):
         return datetime.fromisoformat(date_str)
     return date_str if isinstance(date_str, datetime) else datetime.now()
 
-# ====== MAIN LOAD DATA FUNCTION ======
+# ====== MAIN LOAD DATA FUNCTION - UNIVERSAL ACCESS ======
 def load_data():
-    """Load all data from Supabase into session state"""
+    """Load all data from Supabase into session state - everyone sees everything"""
     if not st.session_state.authenticated:
         return
         
     try:
         supabase = init_supabase()
         
-        # Load problem files with user filtering
-        if st.session_state.user_role in ['Admin', 'Partner']:
-            # Admin and Partners see all files
-            problem_files_response = supabase.table('problem_files').select('*').execute()
-        else:
-            # Regular users see files they own or are assigned to
-            owned_files = supabase.table('problem_files').select('*').eq('owner', st.session_state.current_user).execute()
-            
-            assigned_subtasks = supabase.table('subtasks').select('task_id').eq('assigned_to', st.session_state.current_user).execute()
-            
-            if assigned_subtasks.data:
-                task_ids = [subtask['task_id'] for subtask in assigned_subtasks.data]
-                assigned_tasks = supabase.table('tasks').select('problem_file_id').in_('id', task_ids).execute()
-                
-                if assigned_tasks.data:
-                    file_ids = [task['problem_file_id'] for task in assigned_tasks.data]
-                    assigned_files = supabase.table('problem_files').select('*').in_('id', file_ids).execute()
-                else:
-                    assigned_files = type('obj', (object,), {'data': []})
-            else:
-                assigned_files = type('obj', (object,), {'data': []})
-            
-            # Combine results
-            all_file_ids = set()
-            problem_files_data = []
-            
-            for pf in owned_files.data:
-                if pf['id'] not in all_file_ids:
-                    problem_files_data.append(pf)
-                    all_file_ids.add(pf['id'])
-                    
-            for pf in assigned_files.data:
-                if pf['id'] not in all_file_ids:
-                    problem_files_data.append(pf)
-                    all_file_ids.add(pf['id'])
-                    
-            problem_files_response = type('obj', (object,), {'data': problem_files_data})
+        # Load ALL problem files - everyone can see everything
+        problem_files_response = supabase.table('problem_files').select('*').execute()
         
         problem_files = {}
         
@@ -114,7 +79,7 @@ def load_data():
         
         st.session_state.data['problem_files'] = problem_files
         
-        # Load all related data
+        # Load all related data - everyone sees everything
         load_comments()
         load_contacts()
         load_event_logs()
@@ -124,9 +89,9 @@ def load_data():
         st.error(f"Error loading data from Supabase: {e}")
         st.session_state.data['problem_files'] = {}
 
-# ====== LOAD INDIVIDUAL DATA TYPES ======
+# ====== LOAD INDIVIDUAL DATA TYPES - UNIVERSAL ACCESS ======
 def load_comments():
-    """Load comments from Supabase"""
+    """Load ALL comments from Supabase - everyone can see everything"""
     try:
         supabase = init_supabase()
         comments_response = supabase.table('comments').select('*').execute()
@@ -167,7 +132,7 @@ def load_comments():
         st.session_state.data['comments'] = {}
 
 def load_contacts():
-    """Load contacts from Supabase"""
+    """Load ALL contacts from Supabase - everyone can see everything"""
     try:
         supabase = init_supabase()
         contacts_response = supabase.table('contacts').select('*').execute()
@@ -194,7 +159,7 @@ def load_contacts():
         st.session_state.data['contacts'] = {}
 
 def load_event_logs():
-    """Load event logs from Supabase"""
+    """Load ALL event logs from Supabase - everyone can see everything"""
     try:
         supabase = init_supabase()
         events_response = supabase.table('event_logs').select('*').execute()
@@ -219,7 +184,7 @@ def load_event_logs():
         st.session_state.data['event_logs'] = {}
 
 def load_sharepoint_links():
-    """Load SharePoint links from Supabase"""
+    """Load ALL SharePoint links from Supabase - everyone can see everything"""
     try:
         supabase = init_supabase()
         links_response = supabase.table('sharepoint_links').select('*').execute()
@@ -245,7 +210,88 @@ def load_sharepoint_links():
         st.error(f"Error loading SharePoint links: {e}")
         st.session_state.data['sharepoint_links'] = {}
 
-# ====== SAVE FUNCTIONS ======
+# ====== UTILITY FUNCTIONS WITH NEW PERMISSION LOGIC ======
+def can_edit_specific_file(file_id):
+    """Check if current user can edit a specific problem file"""
+    if file_id not in st.session_state.data.get('problem_files', {}):
+        return False
+    
+    file_data = st.session_state.data['problem_files'][file_id]
+    
+    # Admin and Partners can edit everything
+    if st.session_state.user_role in ['Admin', 'Partner']:
+        return True
+    
+    # File owners can edit their own files
+    if file_data.get('owner') == st.session_state.current_user:
+        return True
+    
+    # Check if user is assigned to any subtasks in this specific file
+    for task in file_data.get('tasks', {}).values():
+        for subtask in task.get('subtasks', {}).values():
+            if subtask.get('assigned_to') == st.session_state.current_user:
+                return True
+    
+    return False
+
+def can_edit_contact(contact_id):
+    """Check if user can edit a specific contact"""
+    if contact_id not in st.session_state.data.get('contacts', {}):
+        return False
+    
+    contact = st.session_state.data['contacts'][contact_id]
+    file_id = contact.get('problem_file_id')
+    
+    # Can edit if user can edit the file
+    if can_edit_specific_file(file_id):
+        return True
+    
+    # Contact creator can edit their own contacts
+    if contact.get('added_by') == st.session_state.current_user:
+        return True
+    
+    return False
+
+def can_delete_contact(contact_id):
+    """Check if user can delete a specific contact"""
+    if contact_id not in st.session_state.data.get('contacts', {}):
+        return False
+    
+    contact = st.session_state.data['contacts'][contact_id]
+    
+    # Admin and Partners can delete any contact
+    if st.session_state.user_role in ['Admin', 'Partner']:
+        return True
+    
+    # Contact creator can delete their own contacts
+    if contact.get('added_by') == st.session_state.current_user:
+        return True
+    
+    return False
+
+def get_user_accessible_files():
+    """Get files where user has some level of access (for dashboard metrics)"""
+    accessible_files = {}
+    current_user = st.session_state.current_user
+    
+    for file_id, file_data in st.session_state.data.get('problem_files', {}).items():
+        # Everyone can see all files, but track which ones they have edit access to
+        user_can_edit = can_edit_specific_file(file_id)
+        
+        accessible_files[file_id] = {
+            **file_data,
+            'user_can_edit': user_can_edit,
+            'user_is_owner': file_data.get('owner') == current_user,
+            'user_is_assigned': any(
+                subtask.get('assigned_to') == current_user
+                for task in file_data.get('tasks', {}).values()
+                for subtask in task.get('subtasks', {}).values()
+            )
+        }
+    
+    return accessible_files
+
+# ====== SAVE FUNCTIONS (remain the same) ======
 def save_problem_file(file_id: str, file_data: dict):
     """Save or update a problem file"""
     try:
@@ -410,7 +456,7 @@ def save_sharepoint_link(link_id: str, link_data: dict):
         st.error(f"Error saving SharePoint link: {e}")
         return False
 
-# ====== DELETE FUNCTIONS ======
+# ====== DELETE FUNCTIONS (remain the same) ======
 def delete_problem_file(file_id: str):
     """Delete a problem file and all related data"""
     try:
